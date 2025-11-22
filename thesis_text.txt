@@ -1,0 +1,2232 @@
+ 
+ 
+ 
+ 
+ 
+Identifying the Factors Impacting the Performance of Two-Axis Sun-Tracking 
+Photovoltaic Systems on Mobile Platforms 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+Ryan Coble-Neal 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+School of Civil &. Mechanical Engineering Project Thesis 
+Curtin University 
+ 
+13/06/2024 
+  
+ 
+13/06/2024  
+   
+  
+The Head  
+School of Civil & Mechanical Engineering,  
+Curtin University,   
+Kent Street,  
+Bentley, 
+WA 6102  
+   
+  
+Dear Sir,  
+  
+I submit this thesis entitled “ Identifying the Factors Impacting the Performance  of 
+Two-Axis Sun -Tracking Photovoltaic Systems on Mobile Platforms ”, based on 
+MXEN4000 Mechatronic Engineering Research Project 1 and MXEN4004 
+Mechatronic Engineering Research Project 2 , undertaken by me as part -requirement 
+for the degree of B.Eng (Hons) in Mechatronic Engineering.  
+  
+Yours faithfully,  
+  
+  
+  
+  
+  
+Ryan Coble-Neal 
+19182641
+i 
+ 
+ACKNOWLEDGEMENTS 
+ 
+Thanks to Dr. Chris Ford for supervising this thesis, and thanks to Cameron Duncan 
+for allowing me to use his 3D printer to print parts for the experiment.  
+ii 
+ABSTRACT 
+ 
+There are many applications for photovoltaics on mobile platforms from personal 
+vehicles to logistics and public transportation with some studies finding significant 
+merit in their application. The ability to generate power anywhere without emitting 
+greenhouse gases is attractive for decarbonising transport particularly as the cost of 
+fossil fuels increases due to the removal of subsidies and the imposition of emissions 
+taxes. At the same time there are tax incentives on offer to switch to more efficient 
+combustion engines and even bigger tax incentives for hybridisation and 
+electrification. This is particularly notable in cold chain mobile logistics where 
+refrigerated goods are transported by vehicles  operating transport refrigeration units 
+that are ordinarily powered by the diesel engine of the vehicle itself. The performance 
+of photovoltaic panels can be greatly improved with Sun-tracking as the angle between 
+the direction of sunlight and the normal of the panel is the biggest factor that 
+determines how much solar energy is available to convert into electricity. In this thesis 
+the major factors that impact the performance of photovoltaic panels are identified, 
+and the key considerations on locomotive performance of mobile platforms  are 
+outlined. In the process of identifying these factors a significant gap in the literature 
+regarding actuation systems for Sun-tracking on mobile platforms is identified. 
+ 
+ 
+Pages 2 – 19 of this thesis contain material that was  previously submitted as part of 
+the Progress Report assessment for the MXEN4000 Mechatronic Engineering 
+Research Project 1 unit. 
+  
+iii 
+TABLE OF CONTENTS 
+1.0 INTRODUCTION ................................ ................................ ....................... 1 
+2.0 LITERATURE REVIEW ................................ ................................ ................. 2 
+2.1 Applications for Photovoltaics in Mobile Platforms ................................ .........2 
+2.1.1 Personal Vehicles ................................ ................................ ................................ 2 
+2.1.2 Transport Refrigeration Units ................................ ................................ .............. 3 
+2.1.3 Mass Public Transportation ................................ ................................ ................. 7 
+2.2 Main Factors Impacting Performance of PV Panels ................................ .........8 
+2.2.1 Solar Irradiance ................................ ................................ ................................ ..8 
+2.2.2 PV Panel Reflectance ................................ ................................ .........................  19 
+2.2.3 PV Panel Soiling ................................ ................................ ................................  21 
+2.2.4 PV Panel Temperature ................................ ................................ .......................  22 
+2.2.5 Shading ................................ ................................ ................................ .............  23 
+2.2.6 Photovoltaic Material ................................ ................................ ........................  26 
+2.2.7 Panel Degradation................................ ................................ .............................  26 
+2.2.8 Overall Module Energy Conversion Efficiency ................................ ...................  27 
+2.3 Previous Research of Two-Axis Sun-Tracking Performance and Vehicle 
+Integrated Photovoltaics ................................ ................................ ......................  29 
+2.3.1 Two-Axis Sun-Tracker Performance ................................ ................................ ... 29 
+2.3.2 Irradiance Incident Upon Vehicles ................................ ................................ ..... 32 
+2.3.3 Two-Axis Sun-Tracking Systems on Mobile Platforms ................................ ........ 34 
+2.3.4 Actuation Methods ................................ ................................ .............................  35 
+2.4 Considerations of PV Panels on Locomotive Performance .............................  37 
+2.4.1 Net Force Acting on a Vehicle in Rectilinear Motion ................................ .......... 37 
+2.4.2 Power Requirement of Locomotion ................................ ................................ .... 38 
+2.4.3 Relative Effects of Mass and Aerodynamic Drag ................................ ................  39 
+3.0 EXPERIMENTAL PROCEDURE ................................ ................................ . 40 
+3.1 Testing Apparatus ................................ ................................ ..........................  40 
+3.1.1 PV Panels ................................ ................................ ................................ .......... 40 
+3.1.2 Sensors ................................ ................................ ................................ ..............  40 
+3.1.4 Other Components ................................ ................................ .............................  41 
+3.1.4 Microcontroller Unit ................................ ................................ ..........................  41 
+3.1.5 Measurement Equipment ................................ ................................ ....................  42 
+3.1.6 Flat and Incline Platforms ................................ ................................ .................  42 
+iv 
+3.1.7 3D Printed Mounts ................................ ................................ ............................  43 
+3.2 Experimental Setup ................................ ................................ .......................  43 
+3.2.1 PV Panel Configurations ................................ ................................ ...................  43 
+3.2.1 Site Location ................................ ................................ ................................ ...... 44 
+3.3 Measurement Procedure ................................ ................................ ................  45 
+3.3.1 PV Panel Measurements ................................ ................................ ....................  45 
+3.3.2 Recording Two-Axis Stepper Angles ................................ ................................ ... 45 
+3.4 Data Analysis ................................ ................................ ................................  46 
+3.4.1 Converting Illuminance Measurements ................................ ..............................  46 
+3.4.1 Calculating Angles of Incidence ................................ ................................ ......... 46 
+3.4.2 Calculating Two-Axis Tracker Error ................................ ................................ .. 48 
+4.0 RESULTS AND DISCUSSION ................................ ................................ ...... 49 
+4.1 Initial Theoretical Solar Model Irradiance Data ................................ .............  49 
+4.1.1 Simplifying Assumptions ................................ ................................ ....................  49 
+4.1.2 Base Case Solar Insolation Data ................................ ................................ ........ 49 
+4.2 Experimental Irradiance Data ................................ ................................ ........ 51 
+5.0 CONCLUSIONS ................................ ................................ .............................  55 
+6.0 FUTURE WORK ................................ ................................ ............................  56 
+7.0 REFERENCES ................................ ................................ ................................  57 
+APPENDIX A ................................ ................................ ................................ ........ 60 
+ 
+ 
+1 
+1.0 INTRODUCTION 
+ 
+The objectives of this project are as follows: 
+1. Create a simple solar model to evaluate the available solar energy at the 
+latitude where the experimentation will take place. 
+2. Calculate the expected solar energy for different configurations of 
+photovoltaic (PV) panels using the data from the model. 
+3. Validate the model with experimental data. 
+4. Identify the most important factors that influence the performance of 
+photovoltaic panels on mobile platforms. 
+ 
+Through modelling solar equations and making use of simplifying assumptions 
+regarding weather and environmental conditions a maximum energetic gain of 
+35.05% is found for a two-axis Sun-tracking surface compared to a horizontal 
+surface. The solar model predicts that the greatest influence on power generation is 
+the angle of incidence between the normal of a PV panel and the direct beam 
+component of irradiance. An experiment designed to simulate the effect of a mobile 
+platform such as a car being oriented such that it is facing Southward (away from the 
+Sun at the testing site) and on an incline (also Southward) is carried out. Three 
+configurations of PV panels are tested alongside a control experiment demonstrating 
+a maximum gain in average short circuit current of 85.64% by use of two-axis Sun-
+tracking. 
+ 
+Through the literature review a significant gap in the literature regarding actuation 
+systems for two-axis Sun-tracking suitable for mobile platforms is identified while 
+the key governing equations impacting the locomotive performance are derived. 
+There is a need for further research into actuation systems capable of stowing flat 
+during transit to minimise drag while still being able to achieve full range of motion 
+of two-axis Sun-tracking. 
+ 
+  
+2 
+2.0 LITERATURE REVIEW 
+2.1 Applications for Photovoltaics in Mobile Platforms 
+2.1.1 Personal Vehicles 
+ 
+The idea of vehicle integrated photovoltaics has inspired many concept designs and 
+commercial products from the Lightyear 2 (Lightyear n.d.), the Stella Terra and Vita 
+(Smolenaars 2021), and the various entrants to the Bridgestone World Solar 
+Challenge (World Solar Challenge n.d.). While a plethora of examples of the 
+application of vehicle integrated photovoltaics exist in the automotive industry, there 
+are few retrospectively installable PV systems available to consumers. This leaves 
+most consumers who are unable to access products like those mentioned earlier 
+having to attempt to design and install their own PV systems to meet their 
+requirements as seen in Figures 1 and 2 below. 
+ 
+The most common types of vehicles using roof-mounted PV panels include cargo 
+vans, utility vehicles, special utility vehicles, off-road vehicles like the 4WDs in the 
+figures above, and in less frequent occurrence, sedans, and buses. Most of these 
+vehicles use PV panels for powering recreational activities, however some vehicles 
+(mainly cargo vans) are dependent on PV power systems to power appliances used in 
+domestic living. This is commonly referred to as ‘van-life,’ meaning people who live 
+and work in cargo vans, although it is also becoming a popular and cost-effective 
+way for tourists to travel (Australian Broadcasting Corporation 2021).  
+The purpose of these PV systems tends to be to charge a single lead acid accumulator 
+battery, or a lithium-ion based battery system. This power is then used to run 
+Figure 2. Ryan Coble-Neal, Fixed tilt photovoltaic 
+panels on 4WD. 2023, Digital Image. CC BY-SA 2.0 
+Figure 1. Ryan Coble-Neal, Fixed tilt photovoltaic 
+panels on 4WD at night. 2023, Digital Image. CC BY-
+SA 2.0 
+3 
+appliances such as small DC refrigerators, coffee machines and other low wattage 
+appliances, but can also be used to power recovery winches. Some installations 
+involve higher powered PV systems, DC-DC converters, maximum power point 
+trackers (MPPTs) and battery management systems with larger batteries that then 
+provide a series of DC buses for various common voltages. It is also common to find 
+an inverter in a system like this which provides standard grid specification AC power 
+via a dedicated AC bus for appliances that cannot be easily converted to run on DC 
+power. Such AC appliances include electric kettles, inductive cook tops, 
+microwaves, hot water systems, TVs, radio systems, internet connection devices such 
+as Starlink and routers, and in some cases electric ovens. Beyond just recreational 
+and lifestyle applications of roof-mounted photovoltaics on standard commercially 
+available vehicles, there are other types of mobile platforms that require electricity. 
+ 
+2.1.2 Transport Refrigeration Units 
+ 
+Logistics vehicles such as box trucks often operate energy intensive cooling systems 
+for transporting fresh produce and refrigerated goods. The cooling system is called a 
+transport refrigeration unit (TRU) and is employed in a variety of mobile platforms 
+including rail cars, semi-trailers, and shipping containers as well as box trucks. TRUs 
+are powered in a variety of ways including directly from the internal combustion (IC) 
+diesel engine, an integrated diesel genset, a plug-in hybrid electric/diesel 
+combination and a fully electric TRU known colloquially as an eTRU (United States 
+Environmental Protection Agency 2022). In the context of rail cars and shipping 
+containers it is common to find the power source to be a dedicated rail car with a 
+series of diesel gensets known as a ‘powerpack,’ and on-board ship electrical power 
+respectively. 
+It is predicted that given the expected population growth rate up to the year 2050, the 
+requirement for cooling will grow by a factor of 10 (Deutsche Gesellschaft für 
+Internationale Zusammenarbeit (GIZ) GmbH 2022) (She, et al. 2018). This accounts 
+for all cooling, not just that required by TRUs for the cold chain (the refrigerated 
+supply chain), however a growing population that is increasingly inhabiting urban 
+centres requires a greater food supply to be transported over more distance. 
+4 
+Transporting perishable items and products that require freezing, such as medication, 
+through greater distances from more distant production and distribution centres to, 
+and through, bigger and bigger urban centres with more stops exponentially increases 
+the total TRU energy requirement. Particularly when it comes to intra-urban centre 
+travel with multiple stops, where at each stop a significant portion of the refrigeration 
+of the cargo area is lost, the energy requirement and accompanying GHG emissions 
+are significantly higher. 
+Figure 3 below illustrates a simplified model of a cargo van that incorporates a direct 
+IC engine powered TRU and shows the various sources of heat flow during standard 
+operation. 
+ 
+Following on from the simplified model of heat transfer in Figure 3 are the modelled 
+CO2 and NOX emissions related to the main contributing factors that impact the 
+energy requirement from the IC diesel engine for refrigeration, shown in Figure 4 
+below. Note that the PHEM model (version 13.0.3.21), which is an instantaneous 
+vehicle emission model, was used in the referenced study (Yang , et al. 2021).   
+Figure 3. Main sources of heat in refrigerated van.  
+Source: Figure reproduced from (Yang , et al. 2021). 
+5 
+ 
+From the graphs in Figure 4 it can be seen that the impact on GHG emissions due to 
+the additional energy requirement for the refrigeration load was the greatest 
+component even when compared with the additional weight and aerodynamic drag of 
+the TRU itself. Supporting this, Table 1 shown below relates the impact of ambient 
+temperature to the percentage share of additional emissions of these same factors. 
+Table 1: Impact on the CO2 and NOX emissions by various ambient temperature 
+Source: Table reproduced from Yang, et al. 2021. 
+Figure 4. Cumulative plot of (a) CO2 emissions (left) and (b) NOX emissions (right) at an ambient temperature of 
+20 °C (different parts of TRU load).  
+Source: Figure reproduced from (Yang , et al. 2021). 
+
+6 
+The refrigeration load (which increases with increasing ambient temperature) is by 
+far the greatest contributor to additional emissions of cargo vans when the TRU is 
+powered directly by the IC diesel engine of the vehicle. This additional energy 
+requirement is exacerbated by the frequency and duration of cargo doors being 
+opened especially when routes have more and more stops. Concerningly, it has been 
+found that auxiliary engine powered TRUs, i.e., TRUs that have their own dedicated 
+diesel genset which are commonly used in larger vehicles such as rigid trucks and 
+semi-trailers, in the UK, emit 16 times as much NOX and 40 times as much 
+particulate matter per kWh of energy than the locomotive engine of the truck itself 
+(cenex 2021).  
+While the environmental impact of diesel powered TRUs is clear, the economic 
+impact is also significant, especially in the UK. In 2020 the UK government removed 
+the entitlement of certain vehicles using diesel, which included mobile generators 
+such as TRUs, to the red diesel subsidy, which was responsible for subsidising the 
+tax on diesel, from 57.95 pence ($1.12 AUD)/L to 11.14 pence ($0.21 AUD)/L 
+(cenex 2021). As a result, the fuel cost of operating auxiliary engine powered TRUs 
+that use diesel for energy generation are now subject to an additional 80.78% tax 
+cost.  
+Beyond taxes, it is also reasonable to expect fuel prices to continue to rise over the 
+next few decades due to the scarcity of easily accessible fuel reserves leading to 
+more expensive extraction to match an increasing worldwide demand for energy. In 
+an oppositely incentivised approach, the Environmental Protection Agency (EPA) in 
+the United States passed the Diesel Emissions Reduction Act (DERA) which 
+includes a funding scheme that includes emissions reductions of TRUs. Part of the 
+scheme is that the EPA will fund up to 25% of the replacement cost of TRUs to be 
+replaced with more modern diesel or hybrid TRUs with engines meeting the EPAs 
+emissions standards (United States Environmental Protection Agency 2022). Further 
+to this, the EPA offers to fund up to 45% of the cost of an eligible zero-tailpipe 
+emission TRU, among a variety of other funding schemes for stationary refrigeration 
+systems, plug-in/shore power and inductive recharging bay expenses as well (United 
+States Environmental Protection Agency 2022). 
+7 
+Given the various environmental and economic incentives to move toward 
+decarbonising TRUs, some groups have begun working out how this could be 
+achieved at scale. The use of hydrogen as a fuel source in a proton-exchange 
+membrane fuel cell (PEMFC) has been modelled and a feasibility study has been 
+conducted in a European context. The result of the feasibility study was that over a 
+20-year project, inclusive of the cost of hydrogen production and refuelling 
+infrastructure, at least €400,000 of savings could be expected when compared with 
+continuing to operate diesel powered TRUs for the same use case and time period 
+(Garde, et al. 2012). Further to this, the study also anticipates being able to prevent 
+up to 21 tonnes of CO2 emissions per truck per year. While these numbers are very 
+encouraging, the authors do point out that the lack of existing infrastructure remains 
+a barrier to the adoption of fuel cell technology for this purpose. 
+In another approach also investigating a European context, roof mounted PV panels 
+with an accompanying Li-ion battery pack replacing an auxiliary diesel engine on a 
+standard semi-trailer were modelled. The overall system energy generation and cost 
+performance was evaluated for a specified route, and it was found that up to 89% of 
+GHG emissions could be prevented equating to 9572 kgCO2Eq/yr per vehicle 
+(Meneghetti, Magro and Romagnoli 2021). The accompanying payback period for 
+the system was expected to be six years, although the authors anticipate a much 
+shorter payback period as components such as PV panels and Li-ion batteries 
+continue to fall in price in the next decade. 
+ 
+2.1.3 Mass Public Transportation 
+ 
+Another area of interest for electrification of mobile platforms is in mass urban 
+transit. While trains and trams tend to be powered by overhead grid-fed lines, buses 
+remain an unsolved problem in this regard. A study carried out in a Middle Eastern 
+context proposed the use of PV panels to provide energy for tractive effort of buses 
+but further proposed the configuration of the PV panels to improve aerodynamic 
+performance of buses. In the first proposed configuration of roof-mounted PV panels, 
+the panels are oriented on a fixed angle of attack on the roof of the bus and the unit 
+cost of energy and vehicle specific power were found to be 0.922 $/kWh and 12.71 
+8 
+kW/t respectively (Ifaei, et al. 2020). In the other configuration, making use of the 
+frontmost PV panels to improve aerodynamic efficiency, the values were 
+respectively 0.864 $/kWh and 17.53 kW/t. Like the aforementioned study, this study 
+proposed a valid feasibility study and modelled a number of pertinent factors that 
+impact PV performance such as dust, total irradiance, and de-rating factor. The 
+impact of aerodynamic drag and mass were also accounted for and compared against 
+meaningful base cases.  
+ 
+2.2 Main Factors Impacting Performance of PV Panels 
+ 
+Broadly, the performance of PV panels (also known as modules) at any instant in 
+time is dictated by two main factors: The amount of solar irradiance incident upon 
+the photovoltaic material, and the overall module conversion efficiency. Note that 
+there is a subtle, but key distinction between the amount of solar irradiance incident 
+upon a PV panel and the amount of solar irradiance incident upon the photovoltaic 
+material of a PV panel.  
+ 
+2.2.1 Solar Irradiance 
+ 
+Irradiance (W/m2) is a measure of the intensity of power in radiation per unit area. 
+Direct normal irradiance (DNI) is the direct beam irradiance from the Sun as 
+measured at the surface of Earth, while global horizontal irradiance (GHI) is a 
+measure of the total irradiance incident upon a horizontal surface. The GHI is 
+comprised of the angular component of DNI as well as the diffuse horizontal 
+irradiance (DHI), which comes from diffuse light scattered by the atmosphere and 
+clouds. When taking the average of irradiance over time, the insolation (or 
+irradiation) (Wh/m2), which is the total energy of incident radiation upon a unit area, 
+is found. The global averages of GHI and DNI (insolation) are shown in Figures 5 
+and 6 below.  
+9 
+ 
+ 
+ 
+  
+Figure 5. Global horizontal irradiation. 
+Source: Figure reproduced from (Solargis 2021). 
+ 
+Figure 6. Direct normal irradiation. 
+Source: Figure reproduced from (Solargis 2021). 
+10 
+In order to calculate solar irradiance values at a particular site on Earth, the relative 
+position of the Sun and angles from the reference point on Earth must first be 
+calculated. Due to the change in the angle of solar declination over the course of the 
+year, in Winter the intensity of solar irradiance is less, conversely in Summer the 
+intensity is greater. The same case is true for both the Southern and the Northern 
+hemispheres, and this phenomenon is due to the fact that the Earth is tilted by 
+~23.45° with respect to the plane upon which it orbits the Sun. This is visualised in 
+Figure 7 below, along with some key dates including the solstices and equinoxes. 
+ 
+ 
+The June and December solstices represent the dates at which solar irradiance is 
+perpendicular to the tropics of Cancer and Capricorn respectively i.e., the Sun 
+appears directly overhead at the respective tropic. The equinoxes represent the dates 
+at which all points on Earth experience 12 hours of daylight and 12 hours of night, 
+during which time the Sun will appear directly overhead at the equator at solar noon. 
+The equation for calculating the solar declination angle for any given day of the year 
+is given in Equation 1 below (Masters 2013).  
+Figure 7. Solar declination angle. 
+Source: Figure reproduced from (Solar Sena 2021). 
+11 
+𝛿 = 23.45𝑠𝑖𝑛 [360
+365 (𝑛 − 81)] (1) 
+ 
+‘δ’ is the solar declination angle in degrees, and ‘n’ is the day number of the year 
+e.g., January 1st would be n = 1.  
+ 
+The next solar equation needed is the hour angle, which is the number of degrees the 
+Earth must rotate about its axis (Eastward) before the Sun will be directly overhead 
+at a given local meridian (line of longitude) (Masters 2013). Hence, the difference 
+between the Sun’s meridian and the local meridian is the hour angle, which is 
+visualised in Figure 8 below. 
+ 
+ 
+The convention used here is that hours before solar noon (which is when the Sun is 
+directly overhead) are taken to be positive and vice versa e.g., 10am local solar time 
+(ST) corresponds to +2 hours, while 2pm corresponds to -2 hours. Finally, since the 
+Earth rotates 360° per day (4 minutes per degree), and there are 24 hours in a day, it 
+follows that one hour corresponds to 15° in regard to the hour angle. Equation 2 
+below shows the hour angle calculation (Masters 2013). 
+Figure 8. The hour angle is the number of degrees the Earth must turn before the Sun is directly over the local 
+meridian. It is the difference between the Sun’s meridian and the local meridian. 
+Source: Figure reproduced from (Masters 2013). 
+ 
+ 
+ 
+12 
+𝐻 = ( 15°
+ℎ𝑜𝑢𝑟) × 𝐻𝑜𝑢𝑟𝑠 𝑏𝑒𝑓𝑜𝑟𝑒 𝑠𝑜𝑙𝑎𝑟 𝑛𝑜𝑜𝑛  
+→ 𝐻 = ( 15°
+ℎ𝑜𝑢𝑟) × (12 − 𝑆𝑜𝑙𝑎𝑟 𝑇𝑖𝑚𝑒) (2) 
+ 
+The Earth is nominally divided into 24 time zones (UTC) each covering 15° of 
+longitude with the clock time (CT) set to be the same across the entire time zone. 
+When the position of the Sun is required at any clock time and location on Earth, a 
+conversion between the clock time at the local time zone (or local time meridian) and 
+solar time is required shown in Equation 3 below (Masters 2013).  
+ 
+𝑆𝑇 = 𝐶𝑇 + 4 𝑚𝑖𝑛
+𝑑𝑒𝑔𝑟𝑒𝑒 (𝐿𝑜𝑐𝑎𝑙 𝑇𝑖𝑚𝑒 𝑀𝑒𝑟𝑖𝑑𝑖𝑎𝑛 − 𝐿𝑜𝑐𝑎𝑙 𝐿𝑜𝑛𝑔𝑖𝑡𝑢𝑑𝑒)° + 𝐸(min) (3) 
+ 
+‘ST’ is solar time (hours), ‘CT’ is clock time (hours) (add 1 hour if daylight savings 
+time is in effect), ‘local time meridian’ is the longitude of the time zone, ‘local 
+longitude’ is the longitude of an observer within that time zone, and ‘E’ is the 
+equation of time (minutes), which is shown later. An important note here is that most 
+solar energy textbooks treat longitude as positive when West of the Prime Meridian 
+in the range 0° < longitude < 360°. However, the UTC time zones treat longitude as 
+positive when East of the Prime Meridian from 0° < longitude < 180° E, and negative 
+when West from -180° W < longitude < 0°. Thus, Equation 3 should be used for 
+longitudes West of the Prime Meridian (UTC < 0) and should be rearranged as 
+shown in Equation 3.1 below for longitudes East of the Prime Meridian (UTC > 0). 
+ 
+𝑆𝑇 = 𝐶𝑇 + 4 𝑚𝑖𝑛
+𝑑𝑒𝑔𝑟𝑒𝑒 (𝐿𝑜𝑐𝑎𝑙 𝐿𝑜𝑛𝑔𝑖𝑡𝑢𝑑𝑒 − 𝐿𝑜𝑐𝑎𝑙 𝑇𝑖𝑚𝑒 𝑀𝑒𝑟𝑖𝑑𝑖𝑎𝑛)° + 𝐸(min) (3.1) 
+ 
+For a concrete example, take two locations both showing clock time (CT) = 12pm on 
+January 1st: Boston (longitude = 71°W, UTC = -5 i.e. local time meridian = -5 × 15° 
+= 75°W), and Perth (longitude = 115°E, UTC = +8 i.e. local time meridian = 8 × 15° 
+= 120°E). The equation of time ‘E’ is the same for both locations and is -3.6 mins. 
+The solar time (ST) for Boston (using Equation 3) is 12:12pm, and in Perth (using 
+Equation 3.1) it’s 11:36am. Therefore, the hour angle ‘H’ in Boston (using Equation 
+2) is -3°, and in Perth it’s +6°.  
+13 
+The Equation of Time (E) (in minutes) which accounts for the slightly elliptical orbit 
+of the Earth around the Sun which causes the length of a solar day (solar noon to 
+solar noon) to vary throughout the year is found with Equations 4 and 4.1 below 
+(Masters 2013). 
+ 
+𝐸 = 9.87 sin(2𝐵) − 7.53 cos(𝐵) − 1.5 sin(𝐵)  (𝑚𝑖𝑛𝑢𝑡𝑒𝑠) (4) 
+ 
+𝐵 =  360
+364 (𝑛 − 81)  (𝑑𝑒𝑔𝑟𝑒𝑒𝑠) (4.1) 
+ 
+‘B’ is an empirical parameter (degrees). Using the equations for solar declination and 
+hour angle from Equations 1 and 2 respectively, the elevation angle (sometimes 
+referred to as altitude angle), which is the vertical angle between the local horizon of 
+a site and the Sun can be calculated in Equation 5 below (Masters 2013). 
+ 
+𝑠𝑖𝑛(𝛽) = 𝑐𝑜𝑠(𝐿)𝑐𝑜𝑠(𝛿)𝑐𝑜𝑠(𝐻) + 𝑠𝑖𝑛(𝐿)𝑠𝑖𝑛(𝛿) (5) 
+ 
+‘β’ is the elevation angle in degrees and is obtained by taking the inverse sine of the 
+result of the equation while ‘L’ is the latitude angle, with latitudes North of the 
+equator positive and South of the equator negative. A negative elevation angle 
+implies that the Sun is below the local horizon. Extending the earlier example using 
+Boston (latitude = 42° N) and Perth (latitude = -32° S), the elevation angle at 12pm 
+clock time would be ~25° and ~80° respectively.  
+ 
+Another important note is that the elevation angle is within the range of 0° < 𝛽 < 90°. 
+In latitudes between the tropics of Cancer (23.45° N) and Capricorn (-23.45° S) the 
+Sun will appear in the Southern or Northern sky depending on the day of the year. A 
+useful trick to work out whether the Sun will be in the Northern or Southern sky for a 
+given latitude between the tropics on a given day of the year is to set the angle of 
+solar declination equal to the latitude angle from Equation 1 as shown below. 
+ 
+𝛿 = 𝐿 = 23.45𝑠𝑖𝑛 [360
+365 (𝑛 − 81)] (1.1) 
+ 
+14 
+This can be rearranged in terms of the day number ‘n’ which yields two values due to 
+the arcsine. 
+𝑛1, 𝑛2 = 81 +
+365 sin−1 ( 𝐿
+23.45)
+360 (1.2) 
+ 
+On day numbers n1 and n2 (where n2 > n1) the Sun will be directly overhead, and 
+from day numbers n1 to n2 when 𝛿 > L the Sun will appear in the Northern sky at 
+solar noon. For all other days of the year outside of the range from n1 to n2 the Sun 
+will appear in the Southern sky at solar noon. This is useful for sanity checking the 
+calculated azimuth and elevation angles for latitudes between the tropics.  
+ 
+The azimuth angle is the horizontal angle between the Sun and an observer, which is 
+measured from North (but can be measured from South), and can be calculated using 
+the sign convention that North is taken to be 0° with the azimuth angle being positive 
+in the Eastward direction up to 180° and negative in the Westward direction up to -
+180°. The first part of the calculation to determine the azimuth angle is given in 
+Equation 6 below (Masters 2013). 
+ 
+𝑠𝑖𝑛(𝜑𝑠) = 𝑐𝑜𝑠(𝛿)𝑠𝑖𝑛(𝐻)
+𝑐𝑜𝑠(𝛽) (6) 
+ 
+‘𝜑𝑠’ is the azimuth angle of the Sun and the value in degrees is obtained by taking 
+the inverse sine of the result of the equation. However, a check is required to be used 
+to determine the correct value for the azimuth angle as the arcsine yields two 
+possible answers. This check is carried out in the form of an inequality test between 
+the ratio of tangents of the solar declination and latitude angles against the cosine of 
+the hour angle as shown below in Equation 6.1 (Masters 2013). 
+ 
+            if np.cos(H_rad) < check_val:
+                # |phi_s| > 90
+                if phi_s_deg > 0:
+                    phi_s_deg = 180 - phi_s_deg
+                else:
+                    phi_s_deg = -180 - phi_s_deg
+                    
+            # NOTE: The above logic (Eq 6.1) is valid for the Southern Hemisphere (where North=0 is Equatorward).
+            # For Northern Hemisphere, the logic must be inverted because South (180) is Equatorward.
+            # See solar_model.py for the implementation that handles both hemispheres. 
+ 
+These equations form the basis for calculating the angle of incidence between the 
+direct beam component of solar irradiance and the normal of a PV panel. However, 
+for the case of a PV panel that is horizontal and flat with respect to the ground, the 
+15 
+angle of incidence is just the sine of the elevation angle as shown in Equation 7 
+below (Masters 2013). 
+ 
+𝜃 = 𝑠𝑖𝑛(𝛽) (7) 
+ 
+‘𝜃’ is the angle of incidence in degrees. For the case of tilted PV panels that have 
+their own azimuthal orientation and tilt angle, the angle of incidence is calculated 
+using Equation 8 below (Masters 2013). 
+ 
+𝑐𝑜𝑠(𝜃) = 𝑐𝑜𝑠(𝛽)𝑐𝑜𝑠(𝜑𝑠 − 𝜑𝑐)𝑠𝑖𝑛(Σ) + 𝑠𝑖𝑛(𝛽)𝑐𝑜𝑠(Σ) (8) 
+ 
+‘𝜑𝑐’ is the azimuth angle of the PV panel in degrees and ‘Σ’ is the tilt angle of the PV 
+panel in degrees measured upward from the horizontal plane. With the requisite solar 
+angle equations, the components of solar irradiance including the incident direct 
+beam, diffuse, and reflected components can be found. The total beam of irradiance 
+is characterised by an exponential attenuation of apparent extra-terrestrial flux i.e., 
+the solar irradiance measured at the top of the Earth’s atmosphere, with respect to the 
+distance between the Sun and Earth. Other attenuating factors include optical depth 
+and air-mass index, which are measures of air quality and the ratio of the 
+distance/amount of the atmosphere through which the beam must pass respectively. 
+The calculation of apparent extra-terrestrial flux is provided in Equation 9 below 
+(Masters 2013). 
+ 
+𝐴 = 1160 + 75𝑠𝑖𝑛 [360
+365 (𝑛 − 275)] (9) 
+ 
+‘A’ is apparent extra-terrestrial flux in W/m2. As seen by the inclusion of the day 
+number of the year ‘n’, it can be seen that the apparent extra-terrestrial flux changes 
+throughout the year. This is due to the slightly elliptical orbit of the Earth around the 
+Sun causing there to be periods of the year during which the Earth is closer to the 
+Sun and hence the intensity of solar irradiance is greater, and vice versa.  
+16 
+The equation of the attenuating factor of optical depth is provided in Equation 10 
+below (Masters 2013). 
+ 
+𝑘 = 0.174 + 0.035𝑠𝑖𝑛 [360
+365 (𝑛 − 100)] (10) 
+ 
+‘k’ is optical depth and is unitless. The air-mass index, which is a measure of how 
+much atmosphere a beam of solar irradiance must travel through is calculated by 
+Equation 11 below (Masters 2013). 
+ 
+𝑚 =  1
+sin(𝛽) (11) 
+ 
+‘m’ is the air-mass index and is unitless, however it is useful to note that it is 
+inversely related to the sine of the elevation angle meaning that for low values of the 
+elevation angle i.e., in the mornings and evenings, the air-mass index is greatest. 
+Given these equations, the direct beam component of terrestrial solar irradiance can 
+be calculated using Equation 12 below (Masters 2013). 
+ 
+𝐼𝐵 = 𝐴𝑒−𝑘∙𝑚 (12) 
+ 
+‘𝐼𝐵’ is the direct beam of solar irradiance in W/m2 measured at the ground on Earth. 
+It can be seen that the direct beam is the result of attenuation of the extra-terrestrial 
+flux available from the Sun as a function of the extra-terrestrial distance, quality, and 
+amount of atmosphere. The beam component of irradiance incident upon a PV panel 
+is proportional to the direct beam of solar irradiance and the cosine of the angle of 
+incidence between the normal of a PV panel and the direct beam of solar irradiance. 
+In the case of a horizontal PV panel, the calculation of the incident beam component 
+of irradiance is calculated using Equation 13 below (Masters 2013). 
+ 
+𝐼𝐵𝐻 = 𝐼𝐵 sin(𝛽) (13) 
+ 
+17 
+‘𝐼𝐵𝐻 ’ is the incident beam component of irradiance upon a horizontal PV panel in 
+W/m2. The beam component of irradiance incident upon a tilted collector is given in 
+Equation 14 below (Masters 2013). 
+ 
+𝐼𝐵𝐶 = 𝐼𝐵 cos(𝜃) (14) 
+ 
+‘𝐼𝐵𝐶 ’ is the beam component of irradiance incident upon a tilted PV panel in W/m2. 
+The cosine of the angle of incidence is sometimes referred to as the cosine effect. A 
+useful intuition is simply that as the angle of incidence increases up to 90 degrees, 
+the incident beam component of irradiance decreases to 0. The incident beam 
+component of solar irradiance is usually, by an order of magnitude, the most power 
+dense component of solar irradiance, however the diffuse component can comprise a 
+significant portion of the total power of solar irradiance. There is an argument to be 
+made for tracking systems to optimise both the diffuse and direct beam components, 
+however this has been found to only yield an additional 2% energy generation 
+(Gordon, Kreider and Reeves 1991). In the case of horizontal PV panels however, 
+the diffuse component is considerable as the flat orientation of the panel maximises 
+the field of view for collection of diffuse irradiance. This is because it is typically 
+assumed that diffuse irradiance is isotropic in nature. The calculation of the diffuse 
+component of solar irradiance as a proportion of the beam irradiance depends on the 
+sky diffuse factor which is estimated by Equation 15 below (Masters 2013). 
+ 
+𝐶 = 0.095 + 0.04𝑠𝑖𝑛 [360
+365 (𝑛 − 100)] (15) 
+ 
+‘C’ is the sky diffuse factor and is unitless. The sky diffuse factor provides a useful 
+approximation of diffusion as a function of the day of the year. Using this sky diffuse 
+factor, the diffuse component of irradiance on a horizontal PV panel can be 
+calculated using Equation 16 below (Masters 2013). 
+ 
+𝐼𝐷𝐻 = 𝐶𝐼𝐵 (16) 
+18 
+‘𝐼𝐷𝐻’ is the diffuse component of irradiance on a horizontal collector in W/m2. In the 
+case of a tilted mono-facial PV panel the diffuse component of irradiance is 
+proportional to the tilt angle as characterised by Equation 17 below (Masters 2013). 
+ 
+𝐼𝐷𝐶 = 𝐼𝐷𝐻 (1 + cos(Σ)
+2 ) = 𝐶𝐼𝐵 (1 + cos(Σ)
+2 ) (17) 
+ 
+‘𝐼𝐷𝐶 ’ is the diffuse component of irradiance upon a tilted PV panel in W/m2. The 
+diffuse component of irradiance upon a tilted PV panel is represented using the 
+expansion of the diffuse component of irradiance upon a horizontal PV panel to 
+parameterise it in terms of the beam of irradiance. This is done for the sake of 
+generating one computation that applies a series of factors to the beam of irradiance 
+which will be shown later. The final component of irradiance is the reflected 
+irradiance which is calculated using Equation 18 below (Masters 2013). 
+ 
+𝐼𝑅𝐶 = 𝜌(𝐼𝐵𝐻 + 𝐼𝐷𝐻) (1 − cos(Σ)
+2 ) = 𝜌𝐼𝐵 [sin(𝛽) + 𝐶] (1 − cos(Σ)
+2 ) (18) 
+ 
+‘𝐼𝑅𝐶 ’ is the component of reflected irradiance incident upon a tilted PV panel in 
+W/m2, ‘ρ’ is the reflective index/reflectance of the surrounding surfaces and is 
+unitless. The reflective index tends to lie somewhere between 0.1 and 0.8 where 
+something like grass tends to have a value of 0.2 while fresh snow has a value of 0.8. 
+While the reflected irradiance tends to be the weakest component of irradiance it is 
+still worth including, although it should be noted that for a horizontal PV panel the 
+reflected irradiance is zero because the tilt angle is zero. Finally, the total irradiance 
+on a tilted PV panel is calculated using Equation 19 below (Masters 2013). 
+ 
+𝐼𝐶 = 𝐼𝐵𝐶 + 𝐼𝐷𝐶 + 𝐼𝑅𝐶 (19) 
+→ 𝐼𝐶 = 𝐴𝑒−𝑘∙𝑚 [𝑐𝑜𝑠(𝛽)𝑐𝑜𝑠(𝜑𝑠 − 𝜑𝑐)𝑠𝑖𝑛(Σ) + 𝑠𝑖𝑛(𝛽)𝑐𝑜𝑠(Σ) + 𝐶 (1 + cos(Σ)
+2 )
++ 𝜌[sin(𝛽) + 𝐶] (1 − cos(Σ)
+2 ) ] 
+19 
+‘𝐼𝐶 ’ is the total irradiance incident upon a PV panel that can be horizontal or 
+otherwise oriented, in W/m2. 
+ 
+From Equations 1 – 19 the main finding is that the total incident irradiance upon a 
+PV panel is dependent upon the distance between the Sun and the Earth, the angle of 
+incidence between the normal of the PV panel and the components of solar 
+irradiance, the time of day and day of year, amount of atmosphere and cloud cover. 
+The relationship between irradiance, current and overall power generated by a PV 
+panel is directly proportional as seen below in Figure 9.  
+ 
+2.2.2 PV Panel Reflectance 
+ 
+Most modern PV panels make use of deeply textured glass and antireflective 
+coatings (ARCs) to reduce the amount of reflection at the air-glass interface, and 
+within the panel as silicon is reflective. It has been found in multiple numerical, 
+analytical and empirical studies that for angles of incidence greater than 55°, the 
+reflectance of most commercially available PV panels increases exponentially 
+(ForgeSolar n.d.), (Janakeeraman 2013), (Yellowhair and Ho 2015), (Dynge and 
+Stoveland 2013), (King, Boyson and Kratochvill 2004), (King, Boyson and 
+Kratochvil 2002). This results in the light transmission factor, which is the ratio of 
+absorbed flux in PV cells divided by the incident flux on the PV panel surface, 
+dropping at approximately the same rate. Both of these relationships are depicted in 
+Figures 10 and 11 below. 
+Figure 9. Impacts of variations in irradiance on the current and output power of a PV module. 
+Source: Figure reproduced from (Vidyanandan 2017). 
+20 
+ 
+The loss of irradiance due to reflection as a function of angle of incidence between 
+the normal of a PV panel and each component of solar irradiance is characterised in 
+Equation 20 below (Martin and Ruiz 2005). 
+ 
+𝐴𝐿(𝛼) = 1 − 1 − exp [−(cos 𝜃)/𝛼𝑟]
+1 − exp (−1/𝛼𝑟) (20) 
+ 
+Where ‘AL’ is angular loss factor, and ‘𝛼𝑟’ is the angular loss coefficient, which is 
+an empirical dimensionless parameter dependent on the technology of the PV 
+module. Typical values for 𝛼𝑟 range from 0.16 to 0.17 for commercial clean 
+polycrystalline and amorphous silicon modules respectively with these values being 
+inclusive of anti-reflective coatings. This model of angular loss has been applied to 
+data from 79 different sites during meteorologically representative years at latitudes 
+from -80 º to +80.6º with different tilt angles in steps of 10º from 0º to 90º and a fixed 
+azimuth angle, i.e., 0º and 180º in the respective hemispheres. After corrections for 
+local variations due to weather effects, the annual angular loss data as a function of 
+the difference of the absolute value of latitude angle and tilt angle was compiled as 
+seen in Figure 12 below. 
+Figure 10. Reflectance profiles of typical PV 
+module materials. 
+Source: Figure reproduced from (ForgeSolar 
+n.d.). 
+Figure 11. Light transmission factor as a function of angle of 
+incidence for the PV model with the different glass covers  
+Source: Figure reproduced from (Dynge and Stoveland 2013). 
+21 
+ 
+The horizontal axis shows the difference between the absolute value of latitude angle 
+and the tilt angle (from 0 to 90º), which implies that 0º on the horizontal axis 
+corresponds to a tilt angle of the PV module equal to the latitude angle. Conversely, 
++90º implies that the tilt angle is set to 0º and that the latitude is extremely far from 
+the equator. At -90º the tilt angle is set to 90º at the equator. For a latitude such as 
+that of Perth (-32º S), a horizontal PV panel (tilt angle = 0º) would suffer an annual 
+angular loss of approximately 4%. 
+ 
+2.2.3 PV Panel Soiling 
+ 
+The effect of soiling of PV panels by dust or other particles contributes to reflectance 
+and can be approximated by the same parameters in Equation 20 from earlier. The 
+typical values of 𝛼𝑟 can increase to approximately 0.2 when the module is 
+moderately soiled with dust, and up to 0.27 when significantly soiled with dust 
+(Martin and Ruiz 2005). Soiling of PV panels also causes partial shading, and these 
+Figure 12. Calculated AAL of a PV clean module at 79 different sites at tilt angles of 0–90, in steps of 10 
+(equator oriented), plotted against the difference |latitude| – tilt angle. The curves correspond to the predicted 
+AAL by the mixed model at four locations, characterised by ∅ and ∆lm. 
+ 
+Source: Figure reproduced from (Martin and Ruiz 2005). 
+22 
+two effects can result in annual power losses of between 5 – 17% (Vidyanandan 
+2017). Shown below in Figure 13 is the impact of different amounts of different 
+types of dust on the reduction of solar irradiance and its corresponding effect on PV 
+panel power production.  
+ 
+ 
+The rate of accumulation of dust tends to be higher near the ground and near 
+highways (Vidyanandan 2017). 
+ 
+2.2.4 PV Panel Temperature 
+ 
+As the temperature of PV cells within a module increases, the short circuit current 
+increases, the open circuit voltage decreases and the overall power decreases. The 
+temperature of PV modules increases with increasing irradiance and ambient air 
+temperature; however, it decreases with increasing speed of wind flowing over it 
+(Vidyanandan 2017). The typical change in short circuit current, open circuit voltage, 
+module power and efficiency, normalised against irradiance, with respect to 
+temperature, for silicon PV cells is shown in Figure 14 below. 
+Figure 13. Impact of dust density on solar radiation & PV output.  
+Source: Reproduced from (Vidyanandan 2017). 
+Figure 14. Impacts of temperature on PV cell performance.  
+Source: Reproduced from (Vidyanandan 2017). 
+23 
+The open circuit voltage tends to decrease by between 0.1V and 0.3V for each degree 
+K increase in temperature while the short circuit current increases by between 2.3 
+and 4mA/K (Vidyanandan 2017). With the open circuit voltage decreasing more 
+rapidly than the short circuit current increases, the power output decreases. This rate 
+of decrease is approximately 0.4 to 0.5% per degree C increase in module 
+temperature. The current-voltage curve and power-voltage curve of a 240 Wp (peak 
+power) PV module varying with temperature is shown to illustrate these relationships 
+in Figure 15 below. 
+ 
+2.2.5 Shading 
+ 
+Modules are comprised of many PV cells connected in series, as shown in Figure 16 
+below, with each cell typically being modelled as a photo-current source in parallel 
+with a diode, a shunt resistance and a series resistance as shown in Figure 17 below. 
+  
+Figure 15. Impact of cell temperature on the I-V and P-V characteristics of a 240 Wp PV module.  
+Source: Reproduced from (Vidyanandan 2017). 
+Figure 16. A 72-cell crystalline PV module.  
+Source: Reproduced from (Vidyanandan 2017). 
+Figure 17. Parasitic series and shunt resistances in a 
+solar cell circuit.  
+Source: Reproduced from (Honsberg and Bowden 
+n.d.). 
+24 
+The series resistance is caused by the combined internal resistance of the PV cell and 
+its various contacts, while the shunt resistance (sometimes referred to as parallel 
+resistance) is caused by manufacturing defects. The series resistance tends to be 
+small enough to be ignored in calculations generally, while the shunt resistance is 
+very important. During normal operation where every PV cell in a module has 
+enough irradiance such that the diode in the equivalent circuit is conducting, the 
+shunt resistance only causes a small drop in current. This is because the shunt 
+resistance offers an alternative path for current to flow other than the junction of the 
+PV cell. This becomes extremely detrimental in low light conditions when the diode 
+does not have enough current flowing through it and stops conducting. At this time, 
+the current generated by other PV cells connected in series can only flow through the 
+shunt resistor as the leakage current of diodes is generally on the order of 10-12A. The 
+power dissipation is modelled by Equation 21 below. 
+ 
+𝑃 = 𝐼2𝑅 (21) 
+ 
+‘𝑃’ is the power dissipated as heat (W), ‘𝐼’ is the current (A), and ‘𝑅’ is the resistance (Ω). 
+For very high resistances, which the shunt resistance of a PV cell typically is, the power 
+dissipation as heat increases linearly. However, with more series connected cells, and hence 
+more current, the power dissipation as heat increases quadratically. The compound effect of 
+shaded cells on a PV module is that the overall current and voltage both drop and depending 
+on the amount of current flowing and the shunt resistance, those shaded cells can become 
+very hot and cause damage to the PV module. The equivalent circuit of series connected 
+cells with one cell shaded and the corresponding I-V curve is shown in Figures 18 and 19 
+below. 
+Figure 18. A module with n cells in which all of 
+the cells are in the sun (a) or in which the top 
+cell is completely shaded (b).  
+Source: Figure reproduced from (Masters 2013). 
+Figure 19. Effect of shading one cell in an n-cell module. At 
+any given current, module voltage drops from V to ΔV. 
+Source: Reproduced from (Masters 2013). 
+25 
+The effect of uniformly distributed dirt on a PV module, as well as the effect of 
+partial shading of a single cell, and full shading of two cells is shown in Figures 20 
+and 21 below. 
+ 
+Most modern PV modules include bypass diodes that allow current to flow through a 
+string of series connected PV cells if one or more cells in that string become shaded 
+which reduces the impact on the I-V curve as shown in Figures 22 and 23 below. 
+ 
+ 
+The bypass diodes do cause a voltage drop of typically 0.5 – 0.6V but this is much 
+less than the voltage drop experienced without their use when current can only flow 
+through the shunt resistance of shaded cells. 
+ 
+Figure 20. With one cell half-shaded, its equivalent 
+circuit diode still conducts as long as current I from 
+the rest of the module is less than ISC/2 (a). Once I 
+exceeds ISC/2, the diode shuts off and I passes 
+through RP and RS, which can result in very large 
+voltage drops in that cell (b). 
+Source: Figure reproduced from (Masters 2013). 
+Figure 21. Showing the difference in I–V curves for 
+individual cells being shaded and also for uniformly 
+distributed dirt (dashed) on a module. The dots show 
+power at the MPPs. 
+ 
+Source: Figure reproduced from (Masters 2013). 
+Figure 22. Three bypass diodes, each covering one-third of 
+the cells in a module. 
+Source: Reproduced from (Masters 2013). 
+ 
+Figure 23. A module with three bypass diodes 
+with one cell shaded. Without the diodes only 15 
+W would be generated compared to the 43 W 
+provided with diodes. 
+Source: Reproduced from (Masters 2013). 
+ 
+26 
+2.2.6 Photovoltaic Material 
+ 
+Different photovoltaic materials have different properties but there are generally 
+three types of photovoltaic materials used in most commercially available PV panels. 
+These include monocrystalline silicon, polycrystalline silicon and thin-film 
+photovoltaics including amorphous silicon among others. Their key properties in 
+general and comparisons between these different PV technologies is shown in Table 
+2 below. 
+ 
+Table 2: Comparison of Common PV Technologies 
+Source: Table reproduced from (Vidyanandan 2017). 
+ 
+2.2.7 Panel Degradation 
+ 
+Most manufactures provide a 25-year warranty on their PV panels with an expected 
+loss of maximum power generation of 10% in the first 10 years followed by a further 
+10% loss in 10 – 15 years as shown in Figure 24 below. The standard rates of power 
+loss for different technologies are also shown in Table 3 below. 
+
+27 
+  Table 3: Average Yearly Output Loss of PV Cells 
+ 
+2.2.8 Overall Module Energy Conversion Efficiency 
+ 
+Most PV modules have the short circuit current (ISC,) open circuit voltage (VOC), 
+maximum power current (Imp), maximum power voltage (Vmp), maximum power 
+(Pmax) and module efficiency (𝜇𝑚) values given under standard testing conditions 
+(STC). Standard testing conditions include an irradiance of 1000W/m2 (with an angle 
+of incidence of 0°), module temperature of 25°C, and an air mass index of 1.5. The 
+temperature coefficients of these parameters are also given at STC, however there is 
+often a nominal operating cell temperature (NOCT) value provided as well. NOCT 
+testing conditions include an irradiance of 800W/m2 (with an angle of incidence of 
+0°), ambient temperature of 20°C and wind speed of 1m/s, with the reason being that 
+this is more representative of typical operating conditions in the field. To calculate 
+the actual cell temperature in a PV module, the NOCT value and actual irradiance 
+incident upon the module are used as shown in Equation 22 below (Masters 2013). 
+ 
+𝑇𝑐𝑒𝑙𝑙 = 𝑇𝑎𝑚𝑏 + (𝑁𝑂𝐶𝑇 − 20°C
+0.8𝑘𝑊/𝑚2 ) ∙ 𝑆(𝑘𝑊/𝑚2) (22) 
+ 
+‘𝑇𝑐𝑒𝑙𝑙’ is the temperature of the cell (°C), ‘𝑇𝑎𝑚𝑏’ is the ambient temperature (°C), ‘𝑆’ 
+is the measured total irradiance incident upon the module, shown here in kW/m2. The 
+inclusion of 0.8kW/m2 in the denominator is to account for the testing conditions of 
+NOCT. Using the temperature coefficients of short circuit current (𝛼𝐼), open circuit 
+voltage (𝛼𝑣) and maximum power (𝛼𝑝), the corresponding short circuit current, open 
+circuit voltage and maximum power can be closely approximated using Equations 23 
+– 25 below (Masters 2013). 
+ 
+𝐼𝑠𝑐 = 𝐼𝑠𝑐,𝑆𝑇𝐶[1 + 𝛼𝐼(𝑇𝑐𝑒𝑙𝑙 − 25)] × 𝑆 (23) 
+Figure 24. Life span of a typical solar PV module.  
+Source: Reproduced from (Vidyanandan 2017). 
+ 
+ 
+Source: Table reproduced from (Vidyanandan 2017). 
+ 
+28 
+ 
+𝑉𝑜𝑐 = 𝑉𝑜𝑐,𝑆𝑇𝐶[1 + 𝛼𝑣(𝑇𝑐𝑒𝑙𝑙 − 25)] (24) 
+ 
+𝑃𝑚𝑝 = 𝑃𝑚𝑝,𝑆𝑇𝐶[1 + 𝛼𝑝(𝑇𝑐𝑒𝑙𝑙 − 25)] × 𝑆 (25) 
+ 
+‘𝐼𝑠𝑐,𝑆𝑇𝐶 ’ is the short circuit current given at STC (A), ‘𝑉𝑜𝑐,𝑆𝑇𝐶 ’ is the open circuit 
+voltage given at STC, and ‘𝑃𝑚𝑝,𝑆𝑇𝐶 ’ is the maximum power given at STC. Note the 
+exclusion of irradiance in the calculation of the open circuit voltage, which is due to 
+the fact that the open circuit voltage does not change much at all with irradiance. 
+Using the calculated maximum power at a given temperature and irradiance, the 
+effective solar energy conversion efficiency of the module (𝜇𝑝𝑣 ) can be calculated 
+with Equation 26 below (Masters 2013). 
+ 
+𝜇𝑝𝑣 =
+𝑃𝑚𝑝
+𝑆 × 𝐴 (26) 
+ 
+‘𝐴’ is the overall area of the module (m2). The overall module solar energy 
+conversion efficiency will always be slightly lower than the efficiency of the PV 
+cells that comprise it due to the unproductive areas of the module i.e., the space 
+between PV cells, frame etc. All other effects previously mentioned are incorporated 
+by this final efficiency calculation, for example the effect of angular loss is 
+accounted for by the total irradiance ‘S’, as is the cosine effect, cloud cover etc, 
+while the effect due to temperature is accounted for in the calculation of the 
+maximum power. 
+  
+29 
+2.3 Previous Research of Two-Axis Sun-Tracking Performance and Vehicle 
+Integrated Photovoltaics 
+2.3.1 Two-Axis Sun-Tracker Performance 
+ 
+A study compared the performance of PV panels with fixed tilt (equal to latitude 
+angle), single-axis tracking (tilt angle of 40°, azimuth tracking), and two-axis 
+tracking as a function of both total irradiance, and direct beam irradiance fraction 
+(Logan and Raichle n.d.). The findings were that the average power produced by the 
+two-axis tracking PV panel was 25% greater than the average power produced by the 
+fixed-axis panel, while the average power produced by the single-axis tracking PV 
+panel was 16% greater than that of the fixed-axis panel. This was when the total 
+irradiance incident upon the panels was considered, however when the direct beam 
+irradiance fraction was considered, a non-linear trend was observed as shown in 
+Figure 25 below. 
+ 
+The study suggests that as the direct beam fraction of irradiance increases to 100% of 
+the total irradiance that there is a greater variation between the power generated by 
+two-axis tracking, single-axis tracking and fixed-tilt PV panels. The implication of 
+this is that when diffuse or reflected light represent more significant proportions of 
+the total irradiance, the difference in power production between the different 
+configurations decreases. 
+Figure 25. Relationship between power and direct beam fraction for all measured irradiance levels. 
+Source: Reproduced from (Logan and Raichle n.d.). 
+30 
+Another study found that a two-axis tracking PV system generated 30.79% more 
+energy over the course of a year compared with a fixed-tilt (tilt angle equal to 
+latitude angle) system (Eke and Senturk 2012). The power distribution with time for 
+a representative day in Summer and Winter at the site is shown in Figure 26 below. 
+The maximum gain in energetic performance of the two-axis system was found to be 
+42.5% in the month of June (Summer) and the minimum was 17% in January 
+(Winter). The temperature of the modules of the two systems in representative days 
+of the year are shown in Figure 27 below. 
+ 
+The maximum temperature of the two-axis system was found to be 58.5°C while the 
+maximum temperature of the fixed-tilt system was 35.6°C. 
+Figure 26. PV systems operation in representative days. 
+Source: Reproduced from (Eke and Senturk 2012). 
+Figure 27. Temperature variation of PV modules for 
+representative days. 
+Source: Reproduced from (Eke and Senturk 2012). 
+31 
+Another study assessed the impact of rotation and translation on a fixed-tilt PV 
+module (tilt angle of 25°) and a two-axis tracking PV module in three scenarios (Wu, 
+Wang and Chang n.d.): 
+• Both systems stationary at the same location. 
+• Rotating by 360° about the zenith (30° at a time) at a fixed location. 
+• On a slow moving (1km/h) mobile platform. 
+The study found that when both 
+systems were at the same location, the 
+two-axis tracking system generated on 
+average 35.91% more power than the 
+fixed tilt system with the power 
+distribution shown in Figure 28 at right. 
+In the second scenario both systems 
+were rotated in increments of 30° at 
+noon and left in that rotation for five 
+minutes at a time, until a full 360° of 
+rotation was recorded. The findings 
+were that the two-axis tracking system 
+generated on average 60% more power 
+than the fixed-tilt system. The power 
+generation with respect to heading 
+angle is shown in Figure 29 at right. 
+Lastly, when moving the two systems 
+on a mobile platform the average gain 
+in power production was 113.5% with 
+the power distribution over the testing 
+time, plotted against the heading shown 
+in Figure 30 at right. 
+  
+Figure 28. Power generation on mostly clean day for the 
+two systems at fixed location. 
+Source: Reproduced from (Wu, Wang and Chang n.d.). 
+Figure 29. Power generation by the two systems rotation 
+in 360 degrees, respectively. 
+Source: Reproduced from (Wu, Wang and Chang n.d.). 
+Figure 30. Power generation by the two systems on 
+mobile platform, respectively. 
+Source: Reproduced from (Wu, Wang and Chang n.d.). 
+ 
+32 
+2.3.2 Irradiance Incident Upon Vehicles 
+ 
+A study focussed on measuring the incident irradiance on different parts of a vehicle 
+proposed a mobile pyranometer array (MPPA) attached to the roof of a car as shown 
+in Figure 31 below (Ota, et al. 2019).  
+The car was parked in a 
+parking lot with the front 
+pointing approximately North 
+resulting in the data shown in 
+Figure 32 at right being 
+obtained for the irradiance 
+detected by each pyranometer. 
+ 
+The distribution of irradiance 
+with respect to time of day on 
+the roof of the car was found 
+to be similar to that of the 
+global horizontal irradiance 
+distribution.  
+  
+Figure 31. Mobile multiple pyranometers array for a vehicle. 
+Source: Reproduced from (Ota, et al. 2019). 
+Figure 32. Global irradiances for Ix+, Ix−, Iy+, Iy−, and Iroof 
+measured by MMPA on a clear sunny day. GHI measured by the 
+horizontal pyranometer under a static irradiance measurement system 
+is also shown. 
+Source: Reproduced from (Ota, et al. 2019). 
+33 
+Another study also made use of an MPPA and recorded irradiance data over the 
+course of a year of driving approximately the same route shown in Figure 33 below 
+(Araki, Ota and Yamaguchi 2020). 
+ 
+ 
+The typical driving route was traversed between 11:30am and 12:30pm with the 
+typical irradiance compared against a horizontal pyranometer measuring the GHI at 
+the University of Miyazaki as shown in Figure 34 below. 
+ 
+Figure 33. Most frequent driving course of the dynamic solar irradiance measurement in the car. 
+Source: Reproduced from (Araki, Ota and Yamaguchi 2020). 
+Figure 34. Monitored the result of the solar irradiance on the car roof and car sides in the driving route. 
+Source: Reproduced from (Araki, Ota and Yamaguchi 2020). 
+34 
+The irradiance measured on the roof and sides of the car respectively were modelled 
+and compared against the GHI as shown in Figure 35 below. 
+ 
+ 
+The main findings are that the roof of the vehicle tends to experience approximately 
+double the irradiance of the sides of the vehicle combined. 
+ 
+2.3.3 Two-Axis Sun-Tracking Systems on Mobile Platforms 
+ 
+A study investigated the improvement in power production of a PV panel using a 
+parallel actuated system to track the Sun in simulation with the actuator system 
+shown in Figure 36 below (Pisanti 2015). 
+ 
+ 
+  
+Figure 35. Monthly-based comparison between the measured solar irradiance around the car (bar-chart) and 
+modelled (typical year from the METPV-11 solar database, namely, Meteorological Test data for Photovoltaic 
+system) solar irradiance on the car (line-chart): (a) car roof irradiance; (b) car side irradiance. 
+Source: Reproduced from (Araki, Ota and Yamaguchi 2020). 
+Figure 36. a) Graphical output by the MATLAB model, b) Mobile solar roof prototype 3D modelled. 
+Source: Reproduced from (Pisanti 2015). 
+35 
+The two-axis tracking system was modelled against a horizontal system using data 
+from the PvWATTS database and estimated an average 30% gain in energy 
+production from the two-axis system at lower latitudes, and up to 47% gain at higher 
+latitudes. 
+ 
+2.3.4 Actuation Methods 
+ 
+Generally linear actuators and rotary actuators are used when achieving two-axis 
+Sun-tracking as shown in Figure 37 below (Redekar, Deb and Ozana 2022). 
+ 
+ 
+However, there is a constraint when it comes to implementing these types of 
+actuation systems on a mobile platform such as a car or truck.  
+Figure 37. Electric actuators functioning in solar tracking applications. 
+Source: Reproduced from (Redekar, Deb and Ozana 2022). 
+36 
+The configuration space of most two-axis Sun-tracking systems is such that the PV 
+panel is raised above the ground plane either directly connected to actuators or to 
+mechanical linkages that are driven by actuators. The consequence of this is that PV 
+panels mounted onto mobile platforms cannot be actuated in the same way as when 
+the PV panel is tilted it would interfere with the plane of the roof of the vehicle. If, 
+however, the PV panel is raised up off the plane of the roof and actuated in the 
+standard way that most PV panels are actuated, or via a parallel actuated system as 
+seen earlier, then this issue is negated. 
+ 
+The problem with this approach, however, is that the PV panel cannot be stowed flat 
+when the vehicle is in transit. This presents a couple of issues, namely the increased 
+aerodynamic drag force, but also the increased stress that the mechanical components 
+supporting the PV panel experience due to wind loading. There appears to be a gap 
+in the literature regarding two-axis Sun-tracking actuation systems for PV panels on 
+mobile platforms.  
+37 
+2.4 Considerations of PV Panels on Locomotive Performance  
+2.4.1 Net Force Acting on a Vehicle in Rectilinear Motion 
+ 
+The net force acting on a vehicle in rectilinear motion, using Newton’s second law of 
+motion, is described in Equation 27 below. 
+ 
+𝐹𝑛𝑒𝑡 = 𝐹𝑡 − 𝐹𝑓 − 𝐹𝑔 − 𝐹𝑑 = 𝑚𝑎 (27) 
+ 
+Where ‘𝐹𝑛𝑒𝑡’ denotes the net resultant force acting on the vehicle, ‘𝐹𝑡’ denotes the 
+tractive force exerted by the wheels of the vehicle, ‘𝐹𝑓’ denotes the friction force due 
+to rolling resistance between the wheels and the ground, ‘𝐹𝑔’ is the gravitational (or 
+slope) force, ‘𝐹𝑑’ is the aerodynamic drag force, ‘𝑚’ denotes the mass of the vehicle 
+(kg), and ‘𝑎’ denotes the acceleration of the vehicle (m/s2). These forces are 
+decomposed further in Equations 28.1 – 3 below. 
+ 
+𝐹𝑓 =  𝜇𝑟𝑚𝑔𝑐𝑜𝑠(𝜃𝑖) (28.1) 
+𝐹𝑔 = 𝑚𝑔𝑠𝑖𝑛(𝜃𝑖) (28.2) 
+𝐹𝑑 =  1
+2 𝜌𝐶𝑑𝐴𝑣2 (28.3) 
+ 
+Where ‘𝜇𝑟’ denotes the overall coefficient of rolling friction between the points of 
+contact of the vehicle and the ground, ‘𝑔’ denotes the acceleration due to gravity 
+(m/s2), ‘𝜃𝑖’ denotes the angle of inclination (or declination) of the ground (degrees), 
+‘𝜌’ denotes the density of air (kg/m3), ‘𝐶𝑑’ denotes the coefficient of aerodynamic 
+drag of the vehicle, ‘𝐴’ denotes the cross-sectional area of the vehicle normal to the 
+direction of wind (m2), and ‘𝑣’ denotes the relative velocity of the wind (m/s). 
+Equations 28.1 – 3 can be substituted into Equation 27 as shown below in Equation 
+28.4. 
+ 
+𝐹𝑛𝑒𝑡 = 𝐹𝑡 − 𝜇𝑟𝑚𝑔𝑐𝑜𝑠(𝜃𝑖) − 𝑚𝑔𝑠𝑖𝑛(𝜃𝑖) − 1
+2 𝜌𝐶𝑑𝐴𝑣2 = 𝑚𝑎  
+38 
+→ 𝐹𝑛𝑒𝑡 = 𝐹𝑡 − (𝑚𝑔) ∙  [ 𝜇𝑟𝑐𝑜𝑠(𝜃𝑖) + 𝑠𝑖𝑛(𝜃𝑖) ] − 1
+2 𝜌𝐶𝑑𝐴𝑣2 = 𝑚𝑎 (28.4) 
+ 
+For a vehicle moving at a constant velocity, Newton’s first law of motion can be 
+used to find the tractive force from Equation 28.4 as shown in Equation 29 below. 
+ 
+𝐹𝑛𝑒𝑡 = 𝐹𝑡 − (𝑚𝑔) ∙  [ 𝜇𝑟𝑐𝑜𝑠(𝜃𝑖) + 𝑠𝑖𝑛(𝜃𝑖) ] − 1
+2 𝜌𝐶𝑑𝐴𝑣2 = 0  
+→ 𝐹𝑡 = (𝑚𝑔) ∙  [ 𝜇𝑟𝑐𝑜𝑠(𝜃𝑖) + 𝑠𝑖𝑛(𝜃𝑖) ] + 1
+2 𝜌𝐶𝑑𝐴𝑣2 (29) 
+ 
+2.4.2 Power Requirement of Locomotion 
+ 
+The power required to be delivered to the wheels of a vehicle moving at a constant 
+velocity can be found by substituting the tractive force from Equation 29 into the 
+equation of mechanical power in translation in Equation 30 below. 
+ 
+𝑃𝑡 = 𝐹𝑡𝑣 (30) 
+ 
+Where ‘𝑃𝑡’ is the power delivered to the ground via the wheels (W). The power that 
+must be produced by the propulsion system of a vehicle is greater than that delivered 
+to the wheels due to friction, heat and other energetic losses in the transmission and 
+propulsion system itself. These losses can be aggregated into a single efficiency 
+factor which allows the required power from the propulsion system to be calculated 
+from the tractive power as shown in Equation 31 below. 
+ 
+𝑃𝑝 = 𝑃𝑡
+𝜂𝑝
+(31) 
+ 
+Where ‘𝑃𝑝’ is the propulsion power (W), and ‘𝜂𝑝’ is the efficiency of the power 
+delivery from the propulsion system to the contact point of the wheels and the 
+ground. 
+ 
+39 
+2.4.3 Relative Effects of Mass and Aerodynamic Drag 
+ 
+From Equation 29 the tractive force required from the wheels of a vehicle to 
+maintain a constant velocity demonstrates that there is a directly proportional 
+relationship to vehicle mass and cross-sectional area, as well as a square 
+proportionality to velocity. When substituting the expansion of the tractive force 
+from Equation 29 into Equation 30, a cubic proportionality to velocity due to 
+aerodynamic drag is found for tractive power as shown in Equation 32 below. 
+ 
+𝑃𝑡 = ((𝑚𝑔) ∙  [ 𝜇𝑟𝑐𝑜𝑠(𝜃𝑖) + 𝑠𝑖𝑛(𝜃𝑖) ] + 1
+2 𝜌𝐶𝑑𝐴𝑣2) ∙ 𝑣  
+→ 𝑃𝑡 = (𝑚𝑔𝑣) ∙  [ 𝜇𝑟𝑐𝑜𝑠(𝜃𝑖) + 𝑠𝑖𝑛(𝜃𝑖) ] + 1
+2 𝜌𝐶𝑑𝐴𝑣3 (32) 
+ 
+It can be seen that the tractive power requirement due to drag would be significantly 
+greater than that of the mass of the vehicle for higher speeds. The threshold velocity 
+at which point the main component of tractive power becomes the aerodynamic drag 
+component can be found by equating it to the mass component as shown in Equation 
+32.1 below. 
+ 
+(𝑚𝑔𝑣) ∙ [ 𝜇𝑟𝑐𝑜𝑠(𝜃𝑖) + 𝑠𝑖𝑛(𝜃𝑖) ] = 1
+2 𝜌𝐶𝑑𝐴𝑣3  
+(𝑚𝑔) ∙  [ 𝜇𝑟𝑐𝑜𝑠(𝜃𝑖) + 𝑠𝑖𝑛(𝜃𝑖) ] ∙ 2
+𝜌𝐶𝑑𝐴 = 𝑣2  
+→ 𝑣 = √(𝑚𝑔) ∙  [ 𝜇𝑟𝑐𝑜𝑠(𝜃𝑖) + 𝑠𝑖𝑛(𝜃𝑖) ] ∙ 2
+𝜌𝐶𝑑𝐴 (32.1) 
+ 
+As mass increases, this threshold velocity increases, while as cross-sectional area 
+increases the threshold velocity decreases. In order to minimise the overall tractive 
+power requirement when adding PV panels to a vehicle, more emphasis should be 
+placed on the cross-sectional area that is added to the vehicle rather than the weight 
+of the PV panels being added. This is because the proportion of the total mass of the 
+vehicle that the PV panel contributes is likely to be very small, whereas the 
+proportion of overall cross-sectional area that it can contribute is more significant. 
+  
+40 
+3.0 EXPERIMENTAL PROCEDURE 
+3.1 Testing Apparatus 
+3.1.1 PV Panels 
+ 
+Six of the same PV panel with the following stated specifications were used: 
+• Typical peak power = 0.55W 
+• Voltage at peak power = 5.5V 
+• Current at peak power = 100mA 
+• Length = 70mm 
+• Width = 55mm 
+• Efficiency = 17% 
+ 
+3.1.2 Sensors 
+ 
+For each two-axis tracking system four of the same light dependent resistors were 
+used with the following stated specifications:  
+• Light resistance = 135K – 420K 
+• Dark resistance = 10MΩ 
+ 
+For each of the six PV panels being tested, the same DS18B20 digital thermometers 
+were used with the following key stated specifications: 
+• ±0.5°C Accuracy from -10°C to +85°C 
+  
+41 
+3.1.3 Actuators 
+ 
+For each of the two-axis tracking systems, two 28BYJ-48 stepper motors and 
+accompanying ULN2003 driver boards were used with the stated key specifications: 
+• Speed variation ratio = 64 
+• Stride angle = 5.625º/64 
+• Number of phase = 4 
+It has been inferred that ‘speed variation ratio’ corresponds to gear ratio and that 
+‘stride angle’ corresponds to step angle. This means that for a full rotation of the 
+output shaft of the stepper motor it has to step through 4096 steps. However, to 
+reduce the number of GPIO pins required by the microcontroller the control signals 
+were inverted for opposite coils causing double steps to be taken resulting in a 
+resolution of 2048 steps per revolution of the output shaft. 
+ 
+3.1.4 Other Components 
+ 
+In order to reduce the number of GPIO pins required by the stepper motors a 
+CD4069UB CMOS hex inverter IC chip was used for both test rigs. To ensure 
+accurate readings of temperature by the DS18B20 sensors, thermal transfer tape was 
+used between the middle of the PV panel and flat edge of the DS18B20 on every PV 
+panel with the following stated specifications: 
+• Thermal conductivity = 1.4W/m-k 
+• Thickness = 0.2mm 
+ 
+3.1.4 Microcontroller Unit 
+ 
+For each of the platforms one ESP32 devkit was used. The code is shown in 
+Appendix A.  
+42 
+3.1.5 Measurement Equipment 
+ 
+For illuminance measurements a LX1010/LX1010B+ handheld lux meter was used 
+with the following key specifications on the instrument: 
+• Cosine response f2 < 2%. 
+• Total accuracy for all common light source = ± 11% + 2 digits 
+• Total accuracy for source A 2586K standard light source = ± 3% rdg + 10 
+digits 
+For voltage and current measurements of the PV panels during testing a Digitech 
+QM1326 DMM was used with the following key specifications: 
+• DC voltage: 400mV, 4V, 40V, 400V, 1000V (±0.5%) 
+• DC current: 4mA, 40mA, 400mA, 10A (±1.2%) 
+ 
+3.1.6 Flat and Incline Platforms 
+ 
+In order to assess the impact of platform configuration on the power generated by the 
+flat, polar mounted and two-axis tracking PV panels, two platforms were fabricated. 
+One was made such that all the test panels would be resting on a horizontal surface 
+(platform tilt angle = 0º with respect to the ground plane) and the other was made 
+such that the panels would be resting on an incline surface, oriented southward 
+(platform tilt = -20º with respect to the ground plane). The purpose of this was to 
+simulate the effect of a mobile platform on an incline facing South which is the worst 
+possible configuration for a mobile platform South of the equator and outside of the 
+Tropic of Cancer. 
+  
+43 
+3.1.7 3D Printed Mounts 
+ 
+Two identical 3D printed parts were made for the polar mounted PV panels that is a 
+simple triangular frame upon which a PV panels rests on the hypotenuse with a tilt 
+angle of 32º as this is approximately equal to the latitude of the testing location. Two 
+identical 3D printed assemblies of the tracking frame were made to accommodate 
+two stepper motors, the PV panels and their cables. 
+ 
+3.2 Experimental Setup 
+3.2.1 PV Panel Configurations 
+ 
+On the flat platform there were three PV panels mounted in the following 
+configurations: 
+1. Flat PV panel: Tilt angle = platform tilt angle, azimuth angle = 0º. 
+2. Polar mounted PV panel: Tilt angle = 32º, azimuth angle = 0º. 
+3. Two-axis PV panel: Tilt angle = platform tilt angle = 0º, azimuth angle = 0º. 
+On the incline platform there were three PV panels mounted in the following 
+configurations: 
+1. Flat PV panel: Tilt angle = platform tilt angle, azimuth angle = 0º. 
+2. Polar mounted PV panel: Tilt angle = 32º, azimuth angle = -180º. 
+3. Two-axis PV panel: Tilt angle = platform tilt angle, azimuth angle = 0º. 
+Note: the polar mounted PV panel on the incline platform has a tilt angle of 32º but 
+an azimuth angle of -180º with respect to the plane of the incline platform hence the 
+PV panel has a tilt angle of -52º with respect to the ground plane. 
+  
+44 
+3.2.1 Site Location 
+ 
+The site was located in Willetton (lat = 32.0543° S, long = 115.8894° E). Both 
+platforms were mounted via G-clamps to a fence which was approximately normal to 
+the ground i.e., 90º. The platforms were located on a position along the fence such 
+that they had the best view of the Sun throughout the day as there were obstructions 
+such as trees blocking light from before about 9am and after 4pm as seen in Figures 
+38 and 39 below. 
+  
+Figure 38. Ryan Coble-Neal, Horizontal platform 
+(control). 2023, Digital Image. CC BY-SA 2.0 
+Figure 39. Ryan Coble-Neal, Incline platform 
+(experiment). 2023, Digital Image. CC BY-SA 2.0 
+45 
+3.3 Measurement Procedure 
+3.3.1 PV Panel Measurements 
+ 
+The following steps were taken when measuring the short circuit current and open 
+circuit voltage of all PV panels across both the flat and incline platforms: 
+1. Observe the time at the start of the measurement. 
+2. Place the lux-meter sensor on the PV panel such that it is parallel and resting on 
+the panel and observe the reading (kLUX). 
+3. Connect the wires of the PV panel to the DMM and measure the open circuit 
+voltage and observe the reading (V). 
+4. Switch the DMM to measure current and measure the short circuit current and 
+observe the reading (mA). 
+5. Record the time and the measurement data. 
+ 
+This process typically took less than 30 seconds to complete, however as the day of 
+testing did have some cloud cover there were times where the measurement of 
+illuminance did not correspond to the actual illuminance on the PV panels when 
+measuring their short circuit current and open circuit voltage. 
+ 
+3.3.2 Recording Two-Axis Stepper Angles 
+ 
+During the morning hours (9am to 11:30am) the azimuth steppers for both trackers 
+were initialised such that the attached PV panel was pointing due East, hence the 
+start of their step count began at 0 whilst pointing East. During the rest of the day the 
+azimuth steppers of both trackers were initialised such that the attached PV panel 
+was pointing due North, hence the start of their step count began at 0 whilst pointing 
+North. Both of the elevation (or tilt) steppers were initialised such that the attached 
+PV panel was pointing at a tilt angle of 90º with respect to the plane of the platform 
+upon which they were resting, hence their step counts began at 0 whilst tilted up 
+fully. The reason for these initialisations was to allow the tracking algorithm to 
+46 
+accurately track the Sun. After measuring the illuminance, short circuit current and 
+open circuit voltage of the PV panel on each of the two-axis trackers the step count 
+was recorded directly from the serial monitor on a laptop attached to the 
+microcontroller for each of the trackers. 
+ 
+3.4 Data Analysis 
+3.4.1 Converting Illuminance Measurements 
+ 
+The measured illuminance values for all readings were converted to estimates of 
+irradiance via a conversion factor of 122 using an engineering rule of thumb 
+(Michael, Johnston and Moreno 2020). 
+ 
+3.4.1 Calculating Angles of Incidence 
+ 
+The following part of the procedure was used for the calculation of angles of 
+incidence of all PV panels as the equations are irrespective of PV panel orientation. 
+All calculations were carried out in an Excel workbook: 
+1. Equation 1 with n = 157 to find the solar declination angle. 
+2. Equation 4.1 with n = 157 to calculate the ‘B’ empirical parameter. 
+3. Equation 4 using the calculated ‘B’ parameter to find the equation of time. 
+4. Equation 3.1 using the calculated equation of time, local longitude = 115.8894° 
+E, local time meridian = 120° E (UTC +8) and the recorded clock time to find the 
+solar time. 
+5. Equation 2 using the calculated solar time to find the hour angle. 
+8. Equation 5 with latitude = -32.0543° S, using the calculated hour angle and solar 
+declination angle, then taking the inverse sine to find the elevation angle. 
+9. Equation 6 using the calculated solar declination angle, hour angle, and elevation 
+angle, then taking the inverse sine to find the two possible azimuth angles. 
+47 
+10. Equation 6.1 using the calculated solar declination angle and latitude angle, then 
+taking the inverse cosine and checking the inequality to find the correct azimuth 
+angle. 
+ 
+The rest of the procedure to calculate the angle of incidence for each PV panel is 
+dependent on the individual configuration angles of the PV panels: 
+ 
+11. Equation 8, taking the inverse cosine with: 
+a. Flat mounted PV panel on flat platform:  
+i. Panel azimuth = 0º,  
+ii. panel tilt = 0º. 
+b. Polar mounted PV panel on flat platform:  
+i. Panel azimuth = 0º,  
+ii. panel tilt = +32º. 
+c. Two-axis tracked PV panel on flat platform:  
+i. When 0 point = East (+90º): 
+1. Panel azimuth = 90º - |(StepCount2 / 2048) * 360º|. 
+ii. When 0 point = North (0º): 
+1. Panel azimuth = 0º - |(StepCount2 / 2048) * 360º|. 
+iii. Panel tilt = 90º - |(StepCount1 / 2048) * 360º| 
+d. Flat mounted PV panel on incline platform: 
+i. Panel azimuth = 0º,  
+ii. panel tilt = -20º 
+e. Polar mounted PV panel on incline platform: 
+i. Panel azimuth = -180º, 
+ii. panel tilt = -52º (from -20º platform tilt angle added to -32º tilt 
+angle facing Southward). 
+f. Two-axis tracked PV panel on incline platform:  
+i. When 0 point = East (+90º): 
+1. Panel azimuth = 90º - |(StepCount2 / 2048) * 360º|. 
+ii. When 0 point = North (0º): 
+1. Panel azimuth = 0º - |(StepCount2 / 2048) * 360º|. 
+iii. Panel tilt = (90º - 20º) - |(StepCount1 / 2048) * 360º|  
+48 
+ 
+3.4.2 Calculating Two-Axis Tracker Error 
+ 
+The tracking error of both trackers is calculated by dividing the calculated angles of 
+incidence by 90º, then multiplying by 100%, i.e., 90º is the maximum value of angle 
+of incidence at which point the error is 100%. 
+  
+49 
+4.0 RESULTS AND DISCUSSION 
+4.1 Initial Theoretical Solar Model Irradiance Data 
+4.1.1 Simplifying Assumptions 
+ 
+Using Equations 1, 2, 3.1, 4, 4.1, 5, 6 - 19, a simple solar model was created in an 
+Excel workbook making use of the following simplifying assumptions: 
+• Cloud cover is assumed to be accounted for by the diffuse sky factor and optical 
+depth parameters. 
+• The value of reflectance of the surrounding environment was pessimistically 
+assumed to be 0.1 at all times. 
+• Shading is not accounted for as it is highly context specific, so instead it has 
+been assumed that the site is devoid of obstructions and has clear access to 
+direct irradiance at all times. 
+ 
+4.1.2 Base Case Solar Insolation Data 
+ 
+With these simplifying assumptions a base case was modelled at a latitude of -32° that 
+calculates the expected daily insolation values for horizontal, polar mounted and two-
+axis tracking surfaces. Table 4 below shows the total daily insolation for each of these 
+cases on the 21st day of each month of the year  to approximate the average monthly 
+insolation for each configuration. 
+Table 4: Total daily insolation for horizontal, polar and two-axis tracking surfaces 
+(kWh/m2/day) for the 21st day of each month. 
+Month Horizontal Polar 2-Axis 
+Jan 9.09 8.01 12.82 
+Feb 8.02 8.02 11.68 
+Mar 6.56 7.58 10.08 
+Apr 4.81 6.50 8.32 
+May 3.55 5.37 6.77 
+50 
+Jun 3.06 4.84 6.15 
+Jul 3.45 5.19 6.53 
+Aug 4.66 6.24 7.90 
+Sep 6.36 7.32 9.61 
+Oct 7.91 7.86 11.31 
+Nov 9.02 7.93 12.59 
+Dec 9.40 7.91 13.04 
+ 
+From this data the total daily insolation for an average day throughout the year for each 
+case was found. Table 5 shows the average daily insolation for these cases. 
+ 
+Table 5: Average total daily insolation for horizontal, polar and two-axis tracking 
+surfaces (kWh/m2/day) 
+ Horizontal Polar 2-Axis 
+Average 6.32 6.90 9.73 
+ 
+The relative percentage difference in average total daily insolation for these four cases 
+is given in Table 6. 
+ 
+Table 6: Relative percentage difference in average total daily insolation for 
+horizontal, polar, azimuthal tracking and two-axis tracking surfaces (%) 
+ Horizontal Polar 2-Axis 
+Horizontal - -8.41 -35.05 
+Polar +8.41 - -29.08 
+1-Axis +28.99 +22.47 -8.53 
+2-Axis +35.05 +29.08 - 
+51 
+The conclusions that can be drawn from the findings of this rudimentary model are 
+that there is at most 35.05% more energy available to an ideal two-axis tracking 
+surface compared with a horizontal surface. 
+ 
+4.2 Experimental Irradiance Data 
+ 
+Due to obstructions causing shading of the experimentation area the data was 
+recorded from 9am to just after 3pm. The total irradiance values incident upon each 
+of the PV modules is shown over the course of the day in Figure 40 below. 
+ 
+As seen in the data of the total incident irradiance for each of the PV modules there is 
+a lot of variance between the different configurations. Outliers within trends for each 
+configuration of PV module indicate a time where cloud cover caused more diffuse 
+irradiance. The irradiance as a function of the calculated angle of incidence for each 
+of the times and PV module configurations is shown in Figure 41 below with a 
+cosine curve superimposed. 
+0
+100
+200
+300
+400
+500
+600
+700
+800
+900
+9 10 11 12 13 14 15 16
+Irradiance (W/m2)
+Time
+Irradiance Throughout the Day
+Flat-Plane
+Flat-Polar
+Flat-2-Axis
+Incline-Plane
+Incline-Polar
+Incline-2-Axis
+Figure 40. Estimated total incident irradiance on each PV panel. 
+52 
+ 
+The short circuit current of each of the PV modules as a function of angle of 
+incidence is shown in Figure 42 below, also with a cosine curve superimposed. 
+ 
+ 
+0
+100
+200
+300
+400
+500
+600
+700
+800
+900
+0 20 40 60 80 100
+Irradiance (W/m2)
+Angle of Incidence (°)
+Irradiance v Angle of Incidence
+Flat-2-Axis-Irradiance
+Flat-Polar-Irradiance
+Flat-Plane-Irradiance
+Incline-2-Axis-Irradiance
+Incline-Polar-Irradiance
+Incline-Plane-Irradiance
+Cosine-Effect
+Poly. (Cosine-Effect)
+Figure 41. Estimated total incident irradiance on each PV panel plotted against angle of incidence. 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+0
+10
+20
+30
+40
+50
+60
+70
+80
+0 20 40 60 80 100
+Short Circuit Current (mA)
+Angle of Incidence (°)
+Short Circuit Current v Angle of Incidence
+Flat-2-Axis-Current
+Flat-Polar-Current
+Flat-Plane-Current
+Incline-2-Axis-Current
+Incline-Polar-Current
+Incline-Plane-Current
+Cosine Effect
+Poly. (Cosine Effect)
+Figure 42. Measured short circuit current of each PV panel plotted against angle of incidence. 
+ 
+53 
+The temperature of each PV module as a function of angle of incidence is shown 
+below in Figure 43. 
+ 
+The short circuit current as a function of irradiance is shown in Figure 44 below. 
+ 
+0
+5
+10
+15
+20
+25
+30
+35
+40
+0 20 40 60 80 100
+Temperature (°C) 
+Angle of Incidence (°)
+Temperature v Angle of Incidence
+Flat-Plane-Temp
+Flat-Polar-Temp
+Flat-2-Axis-Temp
+Incline-Plane-Temp
+Incline-Polar-Temp
+Incline-2-Axis-Temp
+Figure 43. Measured temperature of each PV panel plotted against angle of incidence. 
+ 
+0
+10
+20
+30
+40
+50
+60
+70
+80
+0 200 400 600 800 1000
+Short Circuit Current (mA)
+Irradiance (W/m2)
+Short Circuit Current v Irradiance
+Flat-Plane
+Flat-Polar
+Flat-2-Axis
+Incline-Plane
+Incline-Polar
+Incline-2-Axis
+Figure 44. Measured short circuit current of each PV panel plotted against estimated irradiance. 
+ 
+54 
+The average tracking error as calculated against the predicted angle of incidence is 
+20.05% and 18.44% for the two-axis tracker on the flat platform and the two-axis 
+tracker on the incline platform respectively. The average short circuit current of each 
+of the PV modules is shown in Table 7 below. 
+ 
+Table 7: Average Current of Different Configurations of PV Modules 
+Flat-Plane 
+(mA) 
+Flat-Polar 
+(mA) 
+Flat-2-Axis 
+(mA) 
+Incline-
+Plane 
+(mA) 
+Incline-
+Polar (mA) 
+Incline 2-
+Axis (mA) 
+25.35 39.48 42.64 16.84 7.8 54.31 
+ 
+From the experimental data the trend in total incident irradiance generally follows a 
+cosine curve with respect to the angle of incidence. The short circuit current is also 
+observed generally following a cosine curve with respect to angle of incidence. The 
+temperature is observed tending to decrease with increasing angle of incidence. The 
+short circuit current is observed to increase linearly with increasing irradiance. The 
+difference in average current produced by the two-axis PV module compared with 
+the flat PV module for the flat platform and inclined platform respectively are 
+40.54% and 68.99% respectively. The difference between average short circuit 
+current of the two-axis PV module and the polar PV module on the incline platform 
+is 85.64%. 
+  
+55 
+5.0 CONCLUSIONS 
+ 
+The factors that influence the power generation of a PV panel were identified. The 
+expected solar irradiance at a given site was determined with a theoretical solar 
+model and found a maximum increase in energetic potential of 35.05% if two-axis 
+tracking was used compared to a horizontal surface. The most profound impact on 
+the performance of PV panels on mobile platforms was shown to be the angle of 
+incidence between the normal of the PV panel and the direction of beam irradiance 
+through experimentation. The maximum increase in short circuit current by using 
+two-axis tracking was found to be 85.64%. The governing equations that determine 
+the impact of a PV panel on the performance of a mobile platform were found with 
+the impact of additional cross-sectional area being more significant than the mass of 
+the PV panel. A gap in the literature regarding methods of actuation of PV panels on 
+mobile platforms was discovered.  
+  
+56 
+6.0 FUTURE WORK 
+ 
+The original experimental design made use of a digital potentiometer to vary the load 
+connected to each PV panel as well as a multiplexer to switch which panel was 
+connected to this load. The purpose of this was to electronically sweep the I-V curves 
+of all the PV panels. Unfortunately, there was an issue with a non-linearity between 
+the control signal sent by the ESP32 and the resistance generated by the 
+potentiometer which was likely to be an issue with GPIO pins of the ESP32. An 
+MQTT server was also originally going to be used to transfer data from the ESP32 
+boards to a laptop to then insert into an SQLite database however there was another 
+issue that caused the ESP32 boards to lose connection and become unable to recover. 
+For future work it is recommended that a dedicated voltage and current sensor be 
+used to ensure that voltage and current readings can be taken quickly to avoid the 
+effects of changing irradiance due to cloud cover. Additionally, the methods of 
+actuation of two-axis PV panels on mobile platforms should be explored further as 
+there appears to be a significant gap in the literature regarding a feasible design of 
+such actuation. 
+  
+57 
+7.0 REFERENCES 
+Araki, Kenji, Yasuyuki Ota, and Masafumi Yamaguchi. 2020. “Measurement and Modeling of 
+3D Solar Irradiance for Vehicle-Integrated Photovoltaic.” Applied Sciences.  
+Australian Broadcasting Corporation. 2021. Van life movement gains popularity as people 
+want to live cheaply with the best views. Australian Broadcasting Corporation. 10 
+October. Accessed September 18, 2023. https://www.abc.net.au/news/2021-10-
+10/van-life-australia-live-cheaply-best-views/100520260. 
+cenex. 2021. “Refrigerated Transport Insights: A ZERO White Paper.” White Paper, 
+Leicestershire. 
+Deutsche Gesellschaft für Internationale Zusammenarbeit (GIZ) GmbH . 2022. Net-zero 
+emission solutions for transport refrigeration in a sustainable cold chain . Berlin: 
+Deutsche Gesellschaft für Internationale Zusammenarbeit (GIZ) GmbH . 
+Dynge, Anders Steen-Nilsen, and Asbjørn Orheim Stoveland. 2013. Optical Modellingfor 
+Photovoltaic Panels. Kristiansand: University of Agder. 
+Eke, Rustu, and Ali Senturk. 2012. “Performance comparison of a double-axis sun tracking 
+versus fixed PV system.” Solar Energy 2665-2672. 
+ForgeSolar. n.d. ForgeSolar Help. ForgeSolar. Accessed October 2, 2023. 
+https://www.forgesolar.com/help/. 
+Garde, Raquel, Fernando Jiménez, Tomás Larriba, Gabriel García, Mónica Aguado, and 
+Manuel Martínez. 2012. “Development of a Fuel Cell-Based System for Refrigerated 
+Transport.” Energy Procedia 29: 201-207. 
+Gordon, J M, Jan F Kreider, and Paul Reeves. 1991. “TRACKING AND STATIONARY FLAT 
+PLATE SOLAR COLLECTORS: YEARLY COLLECTIBLE ENERGY CORRELATIONS FOR 
+PHOTOVOLTAIC APPLICATIONS.” Solar Energy 47 (4): 245-252. 
+Honsberg, Christina, and Stuart Bowden. n.d. PV Education. Accessed September 10, 2023. 
+https://www.pveducation.org/pvcdrom/properties-of-sunlight/solar-
+time#footnote1_9mgbfa2. 
+Ifaei, Pouya, Hasti Khiabani, Md Jalil Piran, and ChangKyoo Yoo. 2020. “Techno-econo-
+environmental feasibility of retrofitting urban transportation system with optimal 
+solar panels for climate change mitigation - A case study.” Journal of Cleaner 
+Production 251. 
+Janakeeraman, Suryanarayana Vasantha. 2013. Angle of Incidence And Power Degradation 
+Analysis of Photovoltaic Modules. Tempe: Arizona State University. 
+King, D L, W E Boyson, and J A Kratochvill. 2004. Photovoltaic Array Performance Model . 
+Albuquerque: Sandia National Laboratories . 
+58 
+King, David L, William E Boyson, and Jay A Kratochvil. 2002. ANALYSIS OF FACTORS 
+INFLUENCING THE ANNUAL ENERGY PRODUCTION OF PHOTOVOLTAIC SYSTEMS . 
+Albuquerque: Sandia National Laboratories. 
+Lightyear. n.d. Light Year Two, Electric Driving Made Easy. Lightyear. Accessed September 
+16, 2023. https://lightyear.one/lightyear-2. 
+Logan, Paula E., and Brian W. Raichle. n.d. “PERFORMANCE COMPARISON OF FIXED, 
+SINGLE, AND DUAL AXIS TRACKING SYSTEMS FOR SMALL PHOTOVOLTAIC SYSTEMS 
+WITH MEASURED DIRECT BEAM FRACTION.” Appalachian State University.  
+Martin, N., and J. M. Ruiz. 2005. “Annual Angular Reflection Losses in PV Modules.” 
+PROGRESS IN PHOTOVOLTAICS: RESEARCH AND APPLICATIONS 75–84. 
+Masters, Gilbert M. 2013. Renewable and Efficient Electric Power Systems. Hoboken: John 
+Wiley & Sons, Inc. 
+Meneghetti, Antonella, Fabio Dal Magro, and Alessandro Romagnoli. 2021. “Renewable 
+energy penetration in food delivery: Coupling photovoltaics with transport 
+refrigerated units.” Energy 232. 
+Michael, Peter R., Danvers E. Johnston, and Wilfrido Moreno. 2020. “A conversion guide: 
+solar irradiance and lux illuminance.” Journal of Measurements in Engineering, 153–
+166. 
+Ota, Yasuyuki, Taizo Masuda, Kenji Araki, and Masafumi Yamaguchi. 2019. “A mobile 
+multipyranometer array for the assessment of solar irradiance incident on a 
+photovoltaic-powered vehicle.” Solar Energy 84-90. 
+Pisanti, Cecilia. 2015. “Design and Energetic Evaluation of a Mobile Photovoltaic Roof for 
+Cars.” Energy Procedia 182-192. 
+Redekar, Abhijeet, Dipankar Deb, and Stepan Ozana. 2022. “Functionality Analysis of 
+Electric Actuators in Renewable Energy Systems—A Review.” Sensors 4273. 
+Schwarz, Winfried, Barbara Gschrey, André Leisewitz, Anke Herold, Sabine Gores, Irene 
+Papst, Jürgen Usinger, et al. 2011. “Preparatory study for a review of Regulation 
+(EC) No 842/2006 on certain fluorinated greenhouse gases.” 
+She, Xiaohui, Lin Cong, Binjian Nie, Guanghui Leng, Hao Peng, Yi Chen, Xiaosong Zhang, Tao 
+Wen, Hongxing Yang, and Yimo Luo. 2018. “Energy-efficient and -economic 
+technologies for air conditioning with vapor compression refrigeration: A 
+comprehensive review.” ScienceDirect 232: 157-186. 
+Smolenaars, Kevin. 2021. Presenting our newest solar-vehicle: Stella Vita! Solar Team 
+Eindhoven. 10 September. Accessed September 16, 2023. 
+https://solarteameindhoven.nl/article?presenting-our-newest-solar-vehicle-stella-
+vita. 
+59 
+Solar Sena. 2021. Solar Declination Angle & How to Calculate it. Solar Sena. 26 April. 
+Accessed October 10, 2023. https://solarsena.com/solar-declination-angle-
+calculator/. 
+Solargis. 2021. “Solar resource maps of World.” Solargis. Accessed September 2023, 19. 
+https://solargis.com. 
+United States Environmental Protection Agency. 2022. “Diesel Emissions Reduction Act 
+(DERA) Transport Refrigeration Unit (TRU) Factsheet.” November. Accessed 
+September 19, 2023. 
+https://nepis.epa.gov/Exe/ZyPDF.cgi/P1017V8N.PDF?Dockey=P1017V8N.PDF. 
+Vidyanandan, K. V. 2017. “An Overview of Factors Affecting the Performance of Solar PV 
+Systems.” Energy Scan (A house journal of Corporate Planning, NTPC Ltd.) 2-8. 
+World Solar Challenge. n.d. Bridgestone World Solar Challenge. World Solar Challenge. 
+Accessed September 17, 2023. https://worldsolarchallenge.org/. 
+Wu, Chien-Hsing, Hui-Chiao Wang, and Horng-Yi Chang. n.d. “Dual-axis solar tracker with 
+satellite compass and inclinometer for automatic positioning and tracking.” Energy 
+for Sustainable Development 308-318. 
+Yang , Zhuoqian , James E Tate, Eleonora Morganti , and Simon P Shepherd . 2021. “Real-
+world CO2 and NOX emissions from refrigerated vans.” The Science of the Total 
+Environment 763. 
+Yellowhair, Julius, and Clifford K Ho. 2015. ASSESSMENT OF PHOTOVOLTAIC SURFACE 
+TEXTURING ON TRANSMITTANCE EFFECTS AND GLINT/GLARE IMPACTS. 
+Albuquerque: Sandia National Laboratories. 
+ 
+ 
+  
+60 
+APPENDIX A 
+ 
+/* Script that tracks the sun with two steppers and LDRs. */ 
+ 
+#include <Arduino.h> 
+#include <Stepper.h> 
+#include <OneWire.h> 
+#include <DallasTemperature.h>  
+ 
+/******************** PIN ALLOCATIONS ********************/ 
+// Define stepper1 control pins 
+const int stepper1_ControlPin1 = 32;   
+const int stepper1_ControlPin2 = 33;  
+ 
+// Define stepper2 control pins 
+const int stepper2_ControlPin1 = 26;   
+const int stepper2_ControlPin2 = 27;     
+ 
+// LDR pins 
+const int LDR1 = 15; 
+const int LDR2 = 14; 
+const int LDR3 = 4; 
+const int LDR4 = 13; 
+ 
+// Data wire for DS18B20 temperature sensors is plugged into GPIO 16 
+#define ONE_WIRE_BUS 16 
+ 
+/******************** VARIABLE INITIALISATIONS ********************/ 
+// Define number of steps per revolution, set to 2048 for 2 wire 
+control half stepping 
+const int stepsPerRev = 2048; 
+ 
+// Track step count of stepper1 
+int stepCount1 = 0; 
+ 
+// Direction of stepper1 rotation, used as input for steps to move in 
+.step() function 
+int stepDirection1 = 1; 
+ 
+// Max steps allowed for stepper1 
+int stepper1_maxSteps = 512; 
+ 
+// Track step count of stepper2 
+int stepCount2 = 0; 
+ 
+// Direction of stepper2 rotation, used as input for steps to move in 
+.step() function 
+61 
+int stepDirection2 = 1; 
+                                                                        
+                                                                        
+               
+// Max steps allowed for stepper2 
+int stepper2_maxSteps = 0; 
+ 
+// LDR values 
+int LDR1_value = 0; 
+int LDR2_value = 0; 
+int LDR3_value = 0; 
+int LDR4_value = 0; 
+ 
+// Average LDR values 
+int LDR1_avg = 0; 
+int LDR2_avg = 0; 
+int LDR3_avg = 0; 
+int LDR4_avg = 0; 
+ 
+// Threshold brightness delta required before steppers will rotate 
+int LDR_threshold = 150; 
+ 
+// Used for averaging the values coming from LDRs to manage noise 
+int measurementCount = 10; 
+ 
+// Difference of LDR values on elevation axis 
+int LDR1_2_difference = 0; 
+int LDR3_4_difference = 0; 
+ 
+// Difference of LDR values on azimuth axis 
+int LDR1_3_difference = 0; 
+int LDR2_4_difference = 0; 
+ 
+// Difference of LDR values diagonals 
+int LDR1_4_difference = 0; 
+int LDR2_3_difference = 0; 
+ 
+// Setup a oneWire instance to communicate with temperature sensors 
+OneWire oneWire(ONE_WIRE_BUS); 
+ 
+// Pass oneWire reference to Dallas Temperature.  
+DallasTemperature sensors(&oneWire); 
+ 
+// Store temperature values of different panels 
+float flatTemp = 0.0; 
+float polarTemp = 0.0; 
+float twoAxisTemp = 0.0; 
+ 
+// Sensor addresses 
+62 
+DeviceAddress flatAddress = { 0x28, 0x07, 0x87, 0x4B, 0x21, 0x22, 0x09, 
+0x86 }; 
+DeviceAddress polarAddress = { 0x28, 0xFC, 0xA1, 0x8F, 0x25, 0x22, 
+0x06, 0x80 };  
+DeviceAddress twoAxisAddress = { 0x28, 0x10, 0x50, 0x3C, 0x21, 0x22, 
+0x09, 0x79 }; 
+ 
+// Number of temperature devices found 
+int numberOfDevices; 
+ 
+// Storing the address that are found 
+DeviceAddress tempDeviceAddress;  
+ 
+void printAddress(DeviceAddress deviceAddress); 
+ 
+/******************** STEPPER INSTANTIATIONS ********************/ 
+// Instantiating stepper1 as a 2 wire controlled stepper 
+Stepper stepper1 = Stepper(stepsPerRev, stepper1_ControlPin1, 
+stepper1_ControlPin2); 
+ 
+// Instantiating stepper2 as a 2 wire controlled stepper 
+Stepper stepper2 = Stepper(stepsPerRev, stepper2_ControlPin1, 
+stepper2_ControlPin2); 
+ 
+/******************** FUNCTION PROTOTYPES ********************/ 
+// Move and track steps of steppers 
+void moveAndTrackSteps(Stepper &stepper, int &stepCount, int 
+&stepDirection); 
+ 
+// Printing address of temperature sensors 
+void printAddress(DeviceAddress deviceAddress); 
+ 
+void setup()  
+{ 
+  // Using serial monitor for debugging 
+  Serial.begin(115200); 
+ 
+  // Setting stepper speed in revolutions per minute 
+  stepper1.setSpeed(5); 
+ 
+  // Setting stepper speed in revolutions per minute 
+  stepper2.setSpeed(5); 
+ 
+  // Start up the temperature sensor library 
+  sensors.begin(); 
+} 
+ 
+void loop()  
+{ 
+63 
+  // Send the command to get temperatures 
+  sensors.requestTemperatures();  
+   
+  // Store the current temperatures for each panel 
+  flatTemp = sensors.getTempC(flatAddress); 
+  polarTemp = sensors.getTempC(polarAddress); 
+  twoAxisTemp = sensors.getTempC(twoAxisAddress); 
+ 
+  Serial.print("Flat Temp: "); 
+  Serial.println(flatTemp); 
+  Serial.print("Polar Temp: "); 
+  Serial.println(polarTemp); 
+  Serial.print("2-Axis Temp: "); 
+  Serial.println(twoAxisTemp); 
+ 
+  for(int i = 0; i < measurementCount; i++) 
+  { 
+    // Read the LDRs 
+    LDR1_value += analogRead(LDR1); 
+    LDR2_value += analogRead(LDR2); 
+    LDR3_value += analogRead(LDR3); 
+    LDR4_value += analogRead(LDR4); 
+ 
+    delay(10); 
+  } 
+ 
+  LDR1_avg = LDR1_value/measurementCount; 
+  LDR2_avg = LDR2_value/measurementCount; 
+  LDR3_avg = LDR3_value/measurementCount; 
+  LDR4_avg = LDR4_value/measurementCount; 
+ 
+  // Calculating difference in average readings of LDRs on elevation 
+axis 
+  LDR1_2_difference = LDR1_avg - LDR2_avg; 
+  LDR3_4_difference = LDR3_avg - LDR4_avg; 
+ 
+  // Calculating difference in average readings of LDRs on azimuth axis 
+  LDR1_3_difference = LDR1_avg - LDR3_avg; 
+  LDR2_4_difference = LDR2_avg - LDR4_avg; 
+ 
+  // Calculating difference in average readings of LDRs on the 
+diagonals 
+  LDR1_4_difference = LDR1_avg - LDR4_avg; 
+  LDR2_3_difference = LDR2_avg - LDR3_avg; 
+ 
+/***** ELEVATION AXIS *****/ 
+ 
+  // Check if the difference in average LDR readings in the elevation 
+angle (for both pairs) is above the threshold 
+64 
+  if(abs(LDR1_2_difference) > LDR_threshold && abs(LDR3_4_difference) > 
+LDR_threshold) 
+  { 
+    // Check which direction is brighter and set the direction 
+accordingly for stepper1 
+    if(LDR1_2_difference < 0 || LDR3_4_difference < 0) 
+    { 
+      stepDirection1 = -1; 
+    } 
+    else if(LDR1_2_difference > 0 || LDR3_4_difference > 0) 
+    { 
+      stepDirection1 = 1; 
+    } 
+ 
+    // Check if stepper1 is at its minimum (0 degrees) and is trying to 
+move further in that direction 
+    if(stepCount1 == 0 && stepDirection1 == -1) 
+    { 
+      Serial.println("Stepper1 at min..."); 
+    } 
+    // Check if stepper1 has reached its maximum angle (90 degrees or 
+straight vertical) and is trying to move further in that direction 
+    else if(stepCount1 == stepper1_maxSteps && stepDirection1 == 1) 
+    { 
+      Serial.println("Stepper1 at max..."); 
+    } 
+    else 
+    { 
+      // Move stepper1 in whichever direction specified by 
+stepDirection1 and update stepCount1 
+      moveAndTrackSteps(stepper1, stepCount1, stepDirection1); 
+    } 
+  } 
+ 
+/***** AZIMUTH AXIS *****/ 
+ 
+  // Check if the difference in average LDR readings in the azimuth 
+angle (for both pairs) is above the threshold 
+  if(abs(LDR1_3_difference) > LDR_threshold && abs(LDR2_4_difference) > 
+LDR_threshold) 
+  { 
+    // Check which direction is brighter and set the direction 
+accordingly for stepper2 
+    if(LDR1_3_difference < 0 || LDR2_4_difference < 0) 
+    { 
+      stepDirection2 = 1; 
+    } 
+    else if(LDR1_3_difference > 0 || LDR2_4_difference > 0) 
+    { 
+65 
+      stepDirection2 = -1; 
+    } 
+ 
+    // Check if stepper2 is at its minimum (0 degrees) and is trying to 
+move further in that direction 
+    if(stepCount2 == -1024 && stepDirection2 == -1) 
+    { 
+      Serial.println("Stepper2 at min..."); 
+    } 
+    // Check if stepper2 has reached its maximum angle (180 degrees) 
+and is trying to move further in that direction 
+    else if(stepCount2 == stepper2_maxSteps && stepDirection2 == 1) 
+    { 
+      Serial.println("Stepper2 at max..."); 
+    } 
+    else 
+    { 
+      // Move stepper2 in whichever direction specified by 
+stepDirection2 and update stepCount2 
+      moveAndTrackSteps(stepper2, stepCount2, stepDirection2); 
+    } 
+  } 
+ 
+/***** FIRST DIAGONAL *****/ 
+ 
+  // Check if the difference in average LDR readings in the first 
+diagonal is above the threshold and greater than the other diagonal 
+  if(abs(LDR1_4_difference) > LDR_threshold && abs(LDR1_4_difference) > 
+abs(LDR2_3_difference)) 
+  { 
+    // Check which direction is brighter and set the direction 
+accordingly for both steppers 
+    if(LDR1_4_difference > 0) 
+    { 
+      stepDirection1 = 1; 
+      stepDirection2 = -1; 
+    } 
+    else  
+    { 
+      stepDirection1 = -1; 
+      stepDirection2 = 1; 
+    } 
+ 
+    // Check if stepper1 is at its minimum (0 degrees) and is trying to 
+move further in that direction 
+    if(stepCount1 == 0 && stepDirection1 == -1) 
+    { 
+      Serial.println("Stepper1 at min..."); 
+    } 
+66 
+    // Check if stepper1 has reached its maximum angle (90 degrees or 
+straight vertical) and is trying to move further in that direction 
+    else if(stepCount1 == stepper1_maxSteps && stepDirection1 == 1) 
+    { 
+      Serial.println("Stepper1 at max..."); 
+    } 
+    else 
+    { 
+      // Move stepper1 in whichever direction specified by 
+stepDirection1 and update stepCount1 
+      moveAndTrackSteps(stepper1, stepCount1, stepDirection1); 
+    } 
+ 
+    // Check if stepper2 is at its minimum (0 degrees) and is trying to 
+move further in that direction 
+    if(stepCount2 == -1024 && stepDirection2 == -1) 
+    { 
+      Serial.println("Stepper2 at min..."); 
+    } 
+    // Check if stepper2 has reached its maximum angle (180 degrees) 
+and is trying to move further in that direction 
+    else if(stepCount2 == stepper2_maxSteps && stepDirection2 == 1) 
+    { 
+      Serial.println("Stepper2 at max..."); 
+    } 
+    else 
+    { 
+      // Move stepper2 in whichever direction specified by 
+stepDirection2 and update stepCount2 
+      moveAndTrackSteps(stepper2, stepCount2, stepDirection2); 
+    } 
+  } 
+ 
+/***** SECOND DIAGONAL *****/ 
+ 
+  // Check if the difference in average LDR readings in the second 
+diagonal is above the threshold and greater than the other diagonal 
+  if(abs(LDR2_3_difference) > LDR_threshold && abs(LDR2_3_difference) > 
+abs(LDR1_4_difference)) 
+  { 
+    // Check which direction is brighter and set the direction 
+accordingly for both steppers 
+    if(LDR2_3_difference > 0) 
+    { 
+      stepDirection1 = -1; 
+      stepDirection2 = -1; 
+    } 
+    else  
+    { 
+67 
+      stepDirection1 = 1; 
+      stepDirection2 = 1; 
+    } 
+ 
+    // Check if stepper1 is at its minimum (0 degrees) and is trying to 
+move further in that direction 
+    if(stepCount1 == 0 && stepDirection1 == -1) 
+    { 
+      Serial.println("Stepper1 at min..."); 
+    } 
+    // Check if stepper1 has reached its maximum angle (90 degrees or 
+straight vertical) and is trying to move further in that direction 
+    else if(stepCount1 == stepper1_maxSteps && stepDirection1 == 1) 
+    { 
+      Serial.println("Stepper1 at max..."); 
+    } 
+    else 
+    { 
+      // Move stepper1 in whichever direction specified by 
+stepDirection1 and update stepCount1 
+      moveAndTrackSteps(stepper1, stepCount1, stepDirection1); 
+    } 
+  } 
+ 
+  // Reset the LDR values stored in memory to prepare to read again 
+  LDR1_value = 0; 
+  LDR2_value = 0; 
+  LDR3_value = 0; 
+  LDR4_value = 0; 
+ 
+  Serial.print("Stepper 1 count = "); 
+  Serial.println(stepCount1); 
+  Serial.print("Stepper 2 count = "); 
+  Serial.println(stepCount2); 
+} 
+ 
+/******************** FUNCTION DEFINITIONS ********************/ 
+// Function to move and keep track of steps of steppers 
+void moveAndTrackSteps(Stepper &stepper, int &stepCount, int 
+&stepDirection) 
+{ 
+  // Step 1 step in the relevant direction and update the step counter 
+  stepper.step(stepDirection); 
+  stepCount += stepDirection; 
+} 
+ 
+// Function to print a device address 
+void printAddress(DeviceAddress deviceAddress) { 
+  for (uint8_t i = 0; i < 8; i++){ 
+68 
+    if (deviceAddress[i] < 16) Serial.print("0"); 
+      Serial.print(deviceAddress[i], HEX); 
+  } 
+} 
+ 

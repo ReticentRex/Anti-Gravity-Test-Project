@@ -79,12 +79,46 @@ class SolarModel:
             else:
                 check_val = np.tan(delta_rad) / np.tan(lat_rad)
                 
-            if np.cos(H_rad) < check_val:
-                # |phi_s| > 90
-                if phi_s_deg > 0:
-                    phi_s_deg = 180 - phi_s_deg
-                else:
-                    phi_s_deg = -180 - phi_s_deg
+            # The thesis condition seems to be derived for Southern Hemisphere (where Sun is normally North, i.e., |phi| <= 90).
+            # For Northern Hemisphere (Lat > 0), Sun is normally South (i.e., |phi| > 90).
+            # We need to adjust the logic based on hemisphere.
+            
+            is_north_hemisphere = self.latitude >= 0
+            condition_met = np.cos(H_rad) >= check_val
+            
+            if is_north_hemisphere:
+                # In Northern Hemisphere:
+                # If condition met (Summer-like), Sun is North (|phi| <= 90).
+                # If condition NOT met (Winter-like), Sun is South (|phi| > 90).
+                # Wait, let's re-verify.
+                # Lat 10N, Delta -23 (Winter). tan(d)/tan(l) = -2.4. cos(H)=1. 1 >= -2.4 (True).
+                # Condition Met -> Sun is South (180).
+                # So if North Hem + Condition Met -> South (|phi| > 90).
+                # Lat 10N, Delta +23 (Summer). tan(d)/tan(l) = 2.4. cos(H)=1. 1 >= 2.4 (False).
+                # Condition Not Met -> Sun is North (0).
+                # So if North Hem + Condition Not Met -> North (|phi| <= 90).
+                
+                # So for North Hem:
+                # Met -> South (>90)
+                # Not Met -> North (<=90)
+                if condition_met:
+                     # |phi_s| > 90
+                    if phi_s_deg > 0:
+                        phi_s_deg = 180 - phi_s_deg
+                    else:
+                        phi_s_deg = -180 - phi_s_deg
+                # else: keep |phi_s| <= 90
+                
+            else:
+                # Southern Hemisphere (Original Thesis Logic)
+                # Met -> North (<=90)
+                # Not Met -> South (>90)
+                if not condition_met:
+                    # |phi_s| > 90
+                    if phi_s_deg > 0:
+                        phi_s_deg = 180 - phi_s_deg
+                    else:
+                        phi_s_deg = -180 - phi_s_deg
                     
         return {
             'declination': delta_deg,
@@ -207,7 +241,7 @@ class SolarModel:
         Ic = Ibc + Idc + Irc
         return Ic, cos_theta
 
-    def calculate_pv_performance(self, Ic, cos_theta, T_amb=25):
+    def calculate_pv_performance(self, Ic, cos_theta, T_amb=25, efficiency=0.14):
         """
         Calculate PV Power Output and Losses.
         
@@ -215,6 +249,7 @@ class SolarModel:
             Ic (float): Total Incident Irradiance (W/m2)
             cos_theta (float): Cosine of Angle of Incidence
             T_amb (float): Ambient Temperature (C)
+            efficiency (float): PV Module Efficiency (0.0 to 1.0). Default 0.14.
             
         Returns:
             dict: {
@@ -226,7 +261,7 @@ class SolarModel:
         # Nominal Parameters
         ALPHA_R = 0.17 # Angular Loss Coefficient
         NOCT = 45.0    # Nominal Operating Cell Temp [C]
-        EFF_STC = 0.14 # Efficiency at STC (14%)
+        EFF_STC = efficiency # Efficiency at STC
         ALPHA_P = -0.0045 # Power Temp Coefficient (-0.45%/C)
         
         # 1. Angular Loss (AL)
@@ -265,15 +300,40 @@ class SolarModel:
             'Loss_Thermal': Loss_Thermal 
         }
 
-    def generate_annual_profile(self):
+    def generate_annual_profile(self, fixed_tilt=None, fixed_azimuth=None, efficiency=0.14):
         """
         Generate hourly solar profile for the entire year.
         Calculates irradiance, PV Power, and Losses for 4 collector orientations.
+        Optionally calculates for a 5th "Fixed Custom" orientation.
         
+        Args:
+            fixed_tilt (float, optional): Tilt angle for custom fixed panel.
+            fixed_azimuth (float, optional): Azimuth angle for custom fixed panel.
+            efficiency (float, optional): PV Module Efficiency (0.0 to 1.0). Default 0.14.
+            
         Returns:
-            pd.DataFrame: Hourly data
+            tuple: (pd.DataFrame, dict) -> (Hourly Data, Annual Totals)
         """
         data = []
+        
+        # Initialize Annual Totals
+        annual_yield_horiz = 0
+        annual_yield_1axis_az = 0
+        annual_yield_1axis_el = 0
+        annual_yield_2axis = 0
+        annual_yield_fixed = 0
+        
+        # Loss Totals
+        loss_ang_horiz = 0; loss_therm_horiz = 0
+        loss_ang_1axis_az = 0; loss_therm_1axis_az = 0
+        loss_ang_1axis_el = 0; loss_therm_1axis_el = 0
+        loss_ang_2axis = 0; loss_therm_2axis = 0
+        loss_ang_fixed = 0; loss_therm_fixed = 0
+        
+        # Incident Totals
+        inc_horiz = 0; inc_1axis_az = 0; inc_1axis_el = 0; inc_2axis = 0; inc_fixed = 0
+        
+        daylight_hours_count = 0
         
         for day in range(1, 366):
             for hour in range(24):
@@ -283,6 +343,8 @@ class SolarModel:
                 # Skip if sun is below horizon (Night time)
                 if geom['elevation'] <= 0:
                     continue
+                
+                daylight_hours_count += 1
                 
                 # Calculate base irradiance (DNI, Diffuse Factor)
                 irrad = self.calculate_irradiance(day, geom['elevation'])
@@ -295,19 +357,24 @@ class SolarModel:
                 
                 # --- Mode 1: Horizontal ---
                 Ic_horiz, cos_theta_horiz = self.calculate_incident_irradiance(beta, phi_s, 0, 0, Ib, C)
-                res_horiz = self.calculate_pv_performance(Ic_horiz, cos_theta_horiz)
+                res_horiz = self.calculate_pv_performance(Ic_horiz, cos_theta_horiz, efficiency=efficiency)
                 
                 # --- Mode 2: 1-Axis Azimuth Tracking ---
                 sigma_az_track = abs(self.latitude)
                 phi_c_az_track = phi_s
                 Ic_1axis_az, cos_theta_1axis_az = self.calculate_incident_irradiance(beta, phi_s, sigma_az_track, phi_c_az_track, Ib, C)
-                res_1axis_az = self.calculate_pv_performance(Ic_1axis_az, cos_theta_1axis_az)
+                res_1axis_az = self.calculate_pv_performance(Ic_1axis_az, cos_theta_1axis_az, efficiency=efficiency)
                 
                 # --- Mode 3: 1-Axis Elevation Tracking ---
-                phi_c_el_track = 0 # Facing North
+                # Tracker rotates on E-W axis, tilting N-S.
+                # It should face the sun's azimuth (North or South).
+                if abs(phi_s) <= 90:
+                    phi_c_el_track = 0 # Face North
+                else:
+                    phi_c_el_track = 180 # Face South
                 sigma_el_track = 90 - beta
                 Ic_1axis_el, cos_theta_1axis_el = self.calculate_incident_irradiance(beta, phi_s, sigma_el_track, phi_c_el_track, Ib, C)
-                res_1axis_el = self.calculate_pv_performance(Ic_1axis_el, cos_theta_1axis_el)
+                res_1axis_el = self.calculate_pv_performance(Ic_1axis_el, cos_theta_1axis_el, efficiency=efficiency)
                 
                 # --- Mode 4: 2-Axis Tracking ---
                 sigma_2axis = 90 - beta
@@ -317,7 +384,13 @@ class SolarModel:
                 Ic_2axis = Ibc_2axis + Idc_2axis + Irc_2axis
                 
                 # For 2-axis, cos_theta is always 1 (perfect tracking)
-                res_2axis = self.calculate_pv_performance(Ic_2axis, 1.0)
+                res_2axis = self.calculate_pv_performance(Ic_2axis, 1.0, efficiency=efficiency)
+                
+                # --- Mode 5: Fixed Custom (Optional) ---
+                res_fixed = None
+                if fixed_tilt is not None and fixed_azimuth is not None:
+                    Ic_fixed, cos_theta_fixed = self.calculate_incident_irradiance(beta, phi_s, fixed_tilt, fixed_azimuth, Ib, C)
+                    res_fixed = self.calculate_pv_performance(Ic_fixed, cos_theta_fixed, efficiency=efficiency)
                 
                 row = {
                     'Day': day,
@@ -353,6 +426,16 @@ class SolarModel:
                     'Loss_Therm_1Axis_El_W_m2': res_1axis_el['Loss_Thermal'],
                     'Loss_Therm_2Axis_W_m2': res_2axis['Loss_Thermal']
                 }
+                
+                # Add Fixed Custom data if calculated
+                if res_fixed:
+                    row.update({
+                        'I_Fixed_W_m2': Ic_fixed,
+                        'P_Fixed_W_m2': res_fixed['P_out'],
+                        'Loss_Ang_Fixed_W_m2': res_fixed['Loss_Angular'],
+                        'Loss_Therm_Fixed_W_m2': res_fixed['Loss_Thermal'],
+                    })
+                
                 data.append(row)
                 
         df = pd.DataFrame(data)
@@ -391,9 +474,44 @@ class SolarModel:
             # Performance Ratios
             'Ratio_Yield_Horizontal_vs_2Axis_Percent': (df['P_Horizontal_W_m2'].sum() / 1000) / annual_2axis_yield * 100 if annual_2axis_yield > 0 else 0,
             'Ratio_Yield_1Axis_Azimuth_vs_2Axis_Percent': (df['P_1Axis_Azimuth_W_m2'].sum() / 1000) / annual_2axis_yield * 100 if annual_2axis_yield > 0 else 0,
-            'Ratio_Yield_1Axis_Elevation_vs_2Axis_Percent': (df['P_1Axis_Elevation_W_m2'].sum() / 1000) / annual_2axis_yield * 100 if annual_2axis_yield > 0 else 0
+            'Ratio_Yield_1Axis_Elevation_vs_2Axis_Percent': (df['P_1Axis_Elevation_W_m2'].sum() / 1000) / annual_2axis_yield * 100 if annual_2axis_yield > 0 else 0,
+            'Ratio_Yield_Fixed_vs_2Axis_Percent': (df['P_Fixed_W_m2'].sum() / 1000) / annual_2axis_yield * 100 if annual_2axis_yield > 0 else 0
         }
         
+        # Add Fixed Custom Totals if calculated
+        if fixed_tilt is not None:
+            totals['Annual_I_Fixed_kWh_m2'] = df['I_Fixed_W_m2'].sum() / 1000
+            totals['Annual_Yield_Fixed_kWh_m2'] = df['P_Fixed_W_m2'].sum() / 1000
+            totals['Annual_Loss_Ang_Fixed_kWh_m2'] = df['Loss_Ang_Fixed_W_m2'].sum() / 1000
+            totals['Annual_Loss_Therm_Fixed_kWh_m2'] = df['Loss_Therm_Fixed_W_m2'].sum() / 1000
+            totals['Ratio_Yield_Fixed_vs_2Axis_Percent'] = (df['P_Fixed_W_m2'].sum() / 1000) / annual_2axis_yield * 100 if annual_2axis_yield > 0 else 0
+        
+        # Capacity Factors
+        # Rated Power (kW/m2) = efficiency (since STC is 1 kW/m2)
+        rated_power_kw_m2 = efficiency
+        total_hours = 8760
+        
+        def calc_cf(yield_val, hours):
+            if hours > 0 and rated_power_kw_m2 > 0:
+                return (yield_val / (rated_power_kw_m2 * hours)) * 100
+            return 0.0
+
+        # Overall CF (8760h)
+        totals['CF_Overall_Horizontal'] = calc_cf(totals['Annual_Yield_Horizontal_kWh_m2'], total_hours)
+        totals['CF_Overall_1Axis_Azimuth'] = calc_cf(totals['Annual_Yield_1Axis_Azimuth_kWh_m2'], total_hours)
+        totals['CF_Overall_1Axis_Elevation'] = calc_cf(totals['Annual_Yield_1Axis_Elevation_kWh_m2'], total_hours)
+        totals['CF_Overall_Fixed'] = calc_cf(totals['Annual_Yield_Fixed_kWh_m2'], total_hours)
+        totals['CF_Overall_2Axis'] = calc_cf(totals['Annual_Yield_2Axis_kWh_m2'], total_hours)
+        
+        # Daylight CF
+        totals['CF_Daylight_Horizontal'] = calc_cf(totals['Annual_Yield_Horizontal_kWh_m2'], daylight_hours_count)
+        totals['CF_Daylight_1Axis_Azimuth'] = calc_cf(totals['Annual_Yield_1Axis_Azimuth_kWh_m2'], daylight_hours_count)
+        totals['CF_Daylight_1Axis_Elevation'] = calc_cf(totals['Annual_Yield_1Axis_Elevation_kWh_m2'], daylight_hours_count)
+        totals['CF_Daylight_Fixed'] = calc_cf(totals['Annual_Yield_Fixed_kWh_m2'], daylight_hours_count)
+        totals['CF_Daylight_2Axis'] = calc_cf(totals['Annual_Yield_2Axis_kWh_m2'], daylight_hours_count)
+        
+        totals['Daylight_Hours'] = daylight_hours_count
+
         return df, totals
 
     def save_results(self, df, totals, filename='solar_model_output.csv'):

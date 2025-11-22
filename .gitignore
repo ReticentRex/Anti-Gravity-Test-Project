@@ -42,8 +42,7 @@ Thumbs.db
 *.csv
 !requirements.txt
 
-# Extracted text (large file)
-thesis_text.txt
+
 
 # PDF (if you don't want to commit it)
 *.pdf
