@@ -386,11 +386,186 @@ class SolarModel:
                 # For 2-axis, cos_theta is always 1 (perfect tracking)
                 res_2axis = self.calculate_pv_performance(Ic_2axis, 1.0, efficiency=efficiency)
                 
-                # --- Mode 5: Fixed Custom (Optional) ---
+                # --- Mode 5: 1-Axis Polar (Hour Angle) Tracking ---
+                # User Inputs:
+                # 'fixed_tilt': The tilt of the ROTATION AXIS from the horizontal.
+                # 'fixed_azimuth': The azimuth the PANEL faces at solar noon.
+                
+                # 1. Determine Axis Tilt
+                # If not provided, default to Latitude (standard polar mount).
+                axis_tilt_polar = fixed_tilt if fixed_tilt is not None else abs(self.latitude)
+                
+                # 2. Determine Axis Azimuth
+                # The Axis is the line the panel rotates around.
+                # For a polar mount, the Axis points towards the Celestial Pole.
+                # The Panel is mounted perpendicular to the Axis (or declination adjusted).
+                # At Noon, the Panel faces the Equator (Sun).
+                # Therefore, the Axis Azimuth is 180 degrees opposite to the Panel Azimuth.
+                # Example S. Hem: Panel faces North (0) -> Axis points South (180).
+                # Example N. Hem: Panel faces South (180) -> Axis points North (0).
+                
+                if fixed_azimuth is not None:
+                    panel_azimuth_noon = fixed_azimuth
+                    axis_azimuth_polar = panel_azimuth_noon + 180
+                else:
+                    # Default defaults
+                    if self.latitude < 0:
+                        panel_azimuth_noon = 0 # North
+                        axis_azimuth_polar = 180 # South
+                    else:
+                        panel_azimuth_noon = 180 # South
+                        axis_azimuth_polar = 0 # North
+                
+                # 3. Calculate Axis Vector k
+                # Azimuth is from North (y) towards East (x).
+                az_rad = np.radians(axis_azimuth_polar)
+                tilt_rad = np.radians(axis_tilt_polar)
+                
+                k_x = np.cos(tilt_rad) * np.sin(az_rad)
+                k_y = np.cos(tilt_rad) * np.cos(az_rad)
+                k_z = np.sin(tilt_rad)
+                
+                # 4. Calculate Noon Normal Vector n0
+                # This is the direction the panel faces at solar noon (Hour Angle = 0).
+                # It is determined by the User's 'fixed_azimuth' (Panel Azimuth).
+                # The Tilt of the normal is complementary to the Axis Tilt (90 - Axis Tilt).
+                
+                n0_az_rad = np.radians(panel_azimuth_noon)
+                n0_tilt_rad = np.pi/2 - tilt_rad
+                
+                n0_x = np.cos(n0_tilt_rad) * np.sin(n0_az_rad)
+                n0_y = np.cos(n0_tilt_rad) * np.cos(n0_az_rad)
+                n0_z = np.sin(n0_tilt_rad)
+                
+                # 5. Rotation Angle rho
+                # We rotate n0 about k by angle rho.
+                # rho depends on the Hour Angle (omega) and the Axis direction.
+                # The rotation direction should be such that for positive omega (Morning),
+                # the panel turns towards the East.
+                
+                # Let's define a reference "East" vector e = (1, 0, 0).
+                # The rotation of the normal vector n0 around k should move it towards e in the morning.
+                # Or simpler:
+                # The angular velocity vector w points along the Earth's axis (North).
+                # w_earth = (0, cos(lat), sin(lat)) for N. Hem? No, Earth axis is North-South.
+                # Let's stick to the tracker axis k.
+                # If k points generally North (k_y > 0), then right-hand rotation by +omega moves West-to-East?
+                # Wait, right hand rule around North axis: Thumb North, Fingers curl West-to-East.
+                # So if k points North, +omega rotation is correct.
+                # If k points South, we need -omega rotation to match the Earth's rotation.
+                
+                # We can use the dot product of k with the North Vector (0, 1, 0).
+                # projection = k_y.
+                # If k_y > 0 (North-ish), rho = omega.
+                # If k_y < 0 (South-ish), rho = -omega.
+                # But what if k_y = 0 (East-West axis)?
+                # Then it's a horizontal E-W tracker.
+                # If k points East (1, 0, 0). Right hand rule: Curl Y to Z. South to Up.
+                # Morning (Sun East). We want panel to face East.
+                # This logic is getting tricky for arbitrary axes.
+                
+                # Robust Approach:
+                # The rotation axis k should be aligned such that it has a "North-pointing" component
+                # to use rho = omega.
+                # If the user defines an axis that points South, we should invert the rotation.
+                # So, sign = sign(dot(k, North)).
+                # North = (0, 1, 0). dot = k_y.
+                
+                omega_rad = np.radians(geom['hour_angle'])
+                
+                # Use k_y to determine general North/South alignment
+                if k_y >= 0:
+                    rho_rad = omega_rad
+                else:
+                    rho_rad = -omega_rad
+                
+                # Cross product vector v_cross = k x n0
+                v_cross_x = k_y * n0_z - k_z * n0_y
+                
+                # Rotated Normal Vector n_rot
+                # n_rot = n0 * cos(rho) + v_cross * sin(rho)
+                # x-component:
+                n_rot_x = v_cross_x * np.sin(rho_rad)
+                # y-component:
+                n_rot_y = n0_y * np.cos(rho_rad) 
+                # z-component:
+                n_rot_z = n0_z * np.cos(rho_rad)
+                
+                # Convert n_rot to Tilt (beta) and Azimuth (phi)
+                # Tilt beta_c = arcsin(n_rot_z)
+                # Azimuth phi_c: tan(phi_c) = x / y
+                
+                # Check for valid tilt (must be >= 0, i.e., facing sky)
+                if n_rot_z < 0:
+                    # Facing ground. Clamp to horizon or skip?
+                    # Tracker usually hits mechanical limit or just points down.
+                    # Let's assume it points down (self-shading/backside).
+                    # Effectively 0 direct irradiance.
+                    beta_c_polar = 0
+                    phi_c_polar = 0
+                    cos_theta_polar = 0
+                    Ic_polar = 0 # Initialize here
+                else:
+                    beta_c_polar = np.degrees(np.arcsin(n_rot_z))
+                    
+                    # Azimuth
+                    # atan2(x, y) returns angle from y-axis (North) towards x-axis (East)?
+                    # Standard atan2(y, x) is from x-axis.
+                    # We want Azimuth: 0=North (y), 90=East (x).
+                    # So Azimuth = atan2(x, y).
+                    phi_c_polar = np.degrees(np.arctan2(n_rot_x, n_rot_y))
+                    
+                    # Calculate Incidence
+                    Ic_polar, cos_theta_polar = self.calculate_incident_irradiance(beta, phi_s, beta_c_polar, phi_c_polar, Ib, C)
+
+                res_polar = self.calculate_pv_performance(Ic_polar, cos_theta_polar, efficiency=efficiency)
+                
+                # --- Mode 6: Fixed Custom (Optional) ---
                 res_fixed = None
                 if fixed_tilt is not None and fixed_azimuth is not None:
                     Ic_fixed, cos_theta_fixed = self.calculate_incident_irradiance(beta, phi_s, fixed_tilt, fixed_azimuth, Ib, C)
                     res_fixed = self.calculate_pv_performance(Ic_fixed, cos_theta_fixed, efficiency=efficiency)
+                    
+                # --- Mode 7: Fixed East-West (Dual Panel) ---
+                # Two panels, both tilted 45 deg.
+                # Panel A: Azimuth 90 (East). Panel B: Azimuth 270 (West).
+                # System Yield is average of both (assuming 50/50 capacity split).
+                
+                tilt_ew = 45
+                az_e = 90
+                az_w = 270
+                
+                Ic_e, cos_theta_e = self.calculate_incident_irradiance(beta, phi_s, tilt_ew, az_e, Ib, C)
+                res_e = self.calculate_pv_performance(Ic_e, cos_theta_e, efficiency=efficiency)
+                
+                Ic_w, cos_theta_w = self.calculate_incident_irradiance(beta, phi_s, tilt_ew, az_w, Ib, C)
+                res_w = self.calculate_pv_performance(Ic_w, cos_theta_w, efficiency=efficiency)
+                
+                # Average for System Stats (per m2 of installed capacity)
+                Ic_ew = (Ic_e + Ic_w) / 2
+                P_ew = (res_e['P_out'] + res_w['P_out']) / 2
+                Loss_Ang_ew = (res_e['Loss_Angular'] + res_w['Loss_Angular']) / 2
+                Loss_Therm_ew = (res_e['Loss_Thermal'] + res_w['Loss_Thermal']) / 2
+                
+                # --- Mode 8: Fixed North-South (Dual Panel) ---
+                # Two panels, both tilted 45 deg.
+                # Panel A: Azimuth 0 (North). Panel B: Azimuth 180 (South).
+                
+                tilt_ns = 45
+                az_n = 0
+                az_s = 180
+                
+                Ic_n, cos_theta_n = self.calculate_incident_irradiance(beta, phi_s, tilt_ns, az_n, Ib, C)
+                res_n = self.calculate_pv_performance(Ic_n, cos_theta_n, efficiency=efficiency)
+                
+                Ic_s, cos_theta_s = self.calculate_incident_irradiance(beta, phi_s, tilt_ns, az_s, Ib, C)
+                res_s = self.calculate_pv_performance(Ic_s, cos_theta_s, efficiency=efficiency)
+                
+                # Average for System Stats
+                Ic_ns = (Ic_n + Ic_s) / 2
+                P_ns = (res_n['P_out'] + res_s['P_out']) / 2
+                Loss_Ang_ns = (res_n['Loss_Angular'] + res_s['Loss_Angular']) / 2
+                Loss_Therm_ns = (res_n['Loss_Thermal'] + res_s['Loss_Thermal']) / 2
                 
                 row = {
                     'Day': day,
@@ -405,26 +580,38 @@ class SolarModel:
                     # Irradiance
                     'I_Horizontal_W_m2': Ic_horiz,
                     'I_1Axis_Azimuth_W_m2': Ic_1axis_az,
+                    'I_1Axis_Polar_W_m2': Ic_polar,
                     'I_1Axis_Elevation_W_m2': Ic_1axis_el,
                     'I_2Axis_W_m2': Ic_2axis,
+                    'I_Fixed_EW_W_m2': Ic_ew,
+                    'I_Fixed_NS_W_m2': Ic_ns,
                     
                     # PV Power
                     'P_Horizontal_W_m2': res_horiz['P_out'],
                     'P_1Axis_Azimuth_W_m2': res_1axis_az['P_out'],
+                    'P_1Axis_Polar_W_m2': res_polar['P_out'],
                     'P_1Axis_Elevation_W_m2': res_1axis_el['P_out'],
                     'P_2Axis_W_m2': res_2axis['P_out'],
+                    'P_Fixed_EW_W_m2': P_ew,
+                    'P_Fixed_NS_W_m2': P_ns,
                     
                     # Angular Losses (Irradiance W/m2)
                     'Loss_Ang_Horiz_W_m2': res_horiz['Loss_Angular'],
                     'Loss_Ang_1Axis_Az_W_m2': res_1axis_az['Loss_Angular'],
+                    'Loss_Ang_1Axis_Polar_W_m2': res_polar['Loss_Angular'],
                     'Loss_Ang_1Axis_El_W_m2': res_1axis_el['Loss_Angular'],
                     'Loss_Ang_2Axis_W_m2': res_2axis['Loss_Angular'],
+                    'Loss_Ang_Fixed_EW_W_m2': Loss_Ang_ew,
+                    'Loss_Ang_Fixed_NS_W_m2': Loss_Ang_ns,
                     
                     # Thermal Losses (Power W/m2)
                     'Loss_Therm_Horiz_W_m2': res_horiz['Loss_Thermal'],
                     'Loss_Therm_1Axis_Az_W_m2': res_1axis_az['Loss_Thermal'],
+                    'Loss_Therm_1Axis_Polar_W_m2': res_polar['Loss_Thermal'],
                     'Loss_Therm_1Axis_El_W_m2': res_1axis_el['Loss_Thermal'],
-                    'Loss_Therm_2Axis_W_m2': res_2axis['Loss_Thermal']
+                    'Loss_Therm_2Axis_W_m2': res_2axis['Loss_Thermal'],
+                    'Loss_Therm_Fixed_EW_W_m2': Loss_Therm_ew,
+                    'Loss_Therm_Fixed_NS_W_m2': Loss_Therm_ns
                 }
                 
                 # Add Fixed Custom data if calculated
@@ -450,32 +637,47 @@ class SolarModel:
             # Irradiance Totals
             'Annual_I_Horizontal_kWh_m2': df['I_Horizontal_W_m2'].sum() / 1000,
             'Annual_I_1Axis_Azimuth_kWh_m2': df['I_1Axis_Azimuth_W_m2'].sum() / 1000,
+            'Annual_I_1Axis_Polar_kWh_m2': df['I_1Axis_Polar_W_m2'].sum() / 1000,
             'Annual_I_1Axis_Elevation_kWh_m2': df['I_1Axis_Elevation_W_m2'].sum() / 1000,
             'Annual_I_2Axis_kWh_m2': df['I_2Axis_W_m2'].sum() / 1000,
+            'Annual_I_Fixed_EW_kWh_m2': df['I_Fixed_EW_W_m2'].sum() / 1000,
+            'Annual_I_Fixed_NS_kWh_m2': df['I_Fixed_NS_W_m2'].sum() / 1000,
             
             # PV Energy Yield Totals
             'Annual_Yield_Horizontal_kWh_m2': df['P_Horizontal_W_m2'].sum() / 1000,
             'Annual_Yield_1Axis_Azimuth_kWh_m2': df['P_1Axis_Azimuth_W_m2'].sum() / 1000,
+            'Annual_Yield_1Axis_Polar_kWh_m2': df['P_1Axis_Polar_W_m2'].sum() / 1000,
             'Annual_Yield_1Axis_Elevation_kWh_m2': df['P_1Axis_Elevation_W_m2'].sum() / 1000,
             'Annual_Yield_2Axis_kWh_m2': annual_2axis_yield,
+            'Annual_Yield_Fixed_EW_kWh_m2': df['P_Fixed_EW_W_m2'].sum() / 1000,
+            'Annual_Yield_Fixed_NS_kWh_m2': df['P_Fixed_NS_W_m2'].sum() / 1000,
             
             # Annual Losses (Angular - Irradiance kWh/m2)
             'Annual_Loss_Ang_Horiz_kWh_m2': df['Loss_Ang_Horiz_W_m2'].sum() / 1000,
             'Annual_Loss_Ang_1Axis_Az_kWh_m2': df['Loss_Ang_1Axis_Az_W_m2'].sum() / 1000,
+            'Annual_Loss_Ang_1Axis_Polar_kWh_m2': df['Loss_Ang_1Axis_Polar_W_m2'].sum() / 1000,
             'Annual_Loss_Ang_1Axis_El_kWh_m2': df['Loss_Ang_1Axis_El_W_m2'].sum() / 1000,
             'Annual_Loss_Ang_2Axis_kWh_m2': df['Loss_Ang_2Axis_W_m2'].sum() / 1000,
+            'Annual_Loss_Ang_Fixed_EW_kWh_m2': df['Loss_Ang_Fixed_EW_W_m2'].sum() / 1000,
+            'Annual_Loss_Ang_Fixed_NS_kWh_m2': df['Loss_Ang_Fixed_NS_W_m2'].sum() / 1000,
             
             # Annual Losses (Thermal - Power kWh/m2)
             'Annual_Loss_Therm_Horiz_kWh_m2': df['Loss_Therm_Horiz_W_m2'].sum() / 1000,
             'Annual_Loss_Therm_1Axis_Az_kWh_m2': df['Loss_Therm_1Axis_Az_W_m2'].sum() / 1000,
+            'Annual_Loss_Therm_1Axis_Polar_kWh_m2': df['Loss_Therm_1Axis_Polar_W_m2'].sum() / 1000,
             'Annual_Loss_Therm_1Axis_El_kWh_m2': df['Loss_Therm_1Axis_El_W_m2'].sum() / 1000,
             'Annual_Loss_Therm_2Axis_kWh_m2': df['Loss_Therm_2Axis_W_m2'].sum() / 1000,
+            'Annual_Loss_Therm_Fixed_EW_kWh_m2': df['Loss_Therm_Fixed_EW_W_m2'].sum() / 1000,
+            'Annual_Loss_Therm_Fixed_NS_kWh_m2': df['Loss_Therm_Fixed_NS_W_m2'].sum() / 1000,
             
             # Performance Ratios
             'Ratio_Yield_Horizontal_vs_2Axis_Percent': (df['P_Horizontal_W_m2'].sum() / 1000) / annual_2axis_yield * 100 if annual_2axis_yield > 0 else 0,
             'Ratio_Yield_1Axis_Azimuth_vs_2Axis_Percent': (df['P_1Axis_Azimuth_W_m2'].sum() / 1000) / annual_2axis_yield * 100 if annual_2axis_yield > 0 else 0,
+            'Ratio_Yield_1Axis_Polar_vs_2Axis_Percent': (df['P_1Axis_Polar_W_m2'].sum() / 1000) / annual_2axis_yield * 100 if annual_2axis_yield > 0 else 0,
             'Ratio_Yield_1Axis_Elevation_vs_2Axis_Percent': (df['P_1Axis_Elevation_W_m2'].sum() / 1000) / annual_2axis_yield * 100 if annual_2axis_yield > 0 else 0,
-            'Ratio_Yield_Fixed_vs_2Axis_Percent': (df['P_Fixed_W_m2'].sum() / 1000) / annual_2axis_yield * 100 if annual_2axis_yield > 0 else 0
+            'Ratio_Yield_Fixed_vs_2Axis_Percent': (df['P_Fixed_W_m2'].sum() / 1000) / annual_2axis_yield * 100 if annual_2axis_yield > 0 else 0,
+            'Ratio_Yield_Fixed_EW_vs_2Axis_Percent': (df['P_Fixed_EW_W_m2'].sum() / 1000) / annual_2axis_yield * 100 if annual_2axis_yield > 0 else 0,
+            'Ratio_Yield_Fixed_NS_vs_2Axis_Percent': (df['P_Fixed_NS_W_m2'].sum() / 1000) / annual_2axis_yield * 100 if annual_2axis_yield > 0 else 0
         }
         
         # Add Fixed Custom Totals if calculated
@@ -499,16 +701,22 @@ class SolarModel:
         # Overall CF (8760h)
         totals['CF_Overall_Horizontal'] = calc_cf(totals['Annual_Yield_Horizontal_kWh_m2'], total_hours)
         totals['CF_Overall_1Axis_Azimuth'] = calc_cf(totals['Annual_Yield_1Axis_Azimuth_kWh_m2'], total_hours)
+        totals['CF_Overall_1Axis_Polar'] = calc_cf(totals['Annual_Yield_1Axis_Polar_kWh_m2'], total_hours)
         totals['CF_Overall_1Axis_Elevation'] = calc_cf(totals['Annual_Yield_1Axis_Elevation_kWh_m2'], total_hours)
         totals['CF_Overall_Fixed'] = calc_cf(totals['Annual_Yield_Fixed_kWh_m2'], total_hours)
         totals['CF_Overall_2Axis'] = calc_cf(totals['Annual_Yield_2Axis_kWh_m2'], total_hours)
+        totals['CF_Overall_Fixed_EW'] = calc_cf(totals['Annual_Yield_Fixed_EW_kWh_m2'], total_hours)
+        totals['CF_Overall_Fixed_NS'] = calc_cf(totals['Annual_Yield_Fixed_NS_kWh_m2'], total_hours)
         
         # Daylight CF
         totals['CF_Daylight_Horizontal'] = calc_cf(totals['Annual_Yield_Horizontal_kWh_m2'], daylight_hours_count)
         totals['CF_Daylight_1Axis_Azimuth'] = calc_cf(totals['Annual_Yield_1Axis_Azimuth_kWh_m2'], daylight_hours_count)
+        totals['CF_Daylight_1Axis_Polar'] = calc_cf(totals['Annual_Yield_1Axis_Polar_kWh_m2'], daylight_hours_count)
         totals['CF_Daylight_1Axis_Elevation'] = calc_cf(totals['Annual_Yield_1Axis_Elevation_kWh_m2'], daylight_hours_count)
         totals['CF_Daylight_Fixed'] = calc_cf(totals['Annual_Yield_Fixed_kWh_m2'], daylight_hours_count)
         totals['CF_Daylight_2Axis'] = calc_cf(totals['Annual_Yield_2Axis_kWh_m2'], daylight_hours_count)
+        totals['CF_Daylight_Fixed_EW'] = calc_cf(totals['Annual_Yield_Fixed_EW_kWh_m2'], daylight_hours_count)
+        totals['CF_Daylight_Fixed_NS'] = calc_cf(totals['Annual_Yield_Fixed_NS_kWh_m2'], daylight_hours_count)
         
         totals['Daylight_Hours'] = daylight_hours_count
 
@@ -538,6 +746,7 @@ class SolarModel:
         return {
             'annual_yield_horiz': totals['Annual_Yield_Horizontal_kWh_m2'],
             'annual_yield_1axis_az': totals['Annual_Yield_1Axis_Azimuth_kWh_m2'],
+            'annual_yield_1axis_polar': totals['Annual_Yield_1Axis_Polar_kWh_m2'],
             'annual_yield_1axis_el': totals['Annual_Yield_1Axis_Elevation_kWh_m2'],
             'annual_yield_2axis': totals['Annual_Yield_2Axis_kWh_m2']
         }
