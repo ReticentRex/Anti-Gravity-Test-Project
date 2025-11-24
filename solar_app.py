@@ -1,5 +1,6 @@
 import streamlit as st
 import pandas as pd
+import numpy as np
 import plotly.express as px
 import plotly.graph_objects as go
 import requests
@@ -252,49 +253,6 @@ elif st.session_state['user_mode'] == 'Standard':
             efficiency = 0.14 # Fixed 14%
             
             # Find optimal tilt by testing a range
-            st.info("🔍 Finding optimal tilt angle...")
-            
-            lat_abs = abs(latitude)
-            # Test from (latitude - 5°) to (latitude + 5°), clamped to 0-90°
-            tilt_min = max(0, lat_abs - 5)
-            tilt_max = min(90, lat_abs + 5)
-            
-            best_tilt = lat_abs
-            best_yield = 0
-            
-            # Quick optimization: test every 1 degree
-            for test_tilt in range(int(tilt_min), int(tilt_max) + 1):
-                test_model = SolarModel(latitude, longitude)
-                _, test_totals = test_model.generate_annual_profile(
-                    fixed_tilt=float(test_tilt),
-                    fixed_azimuth=azimuth,
-                    efficiency=efficiency
-                )
-                test_yield = test_totals['Annual_Yield_Fixed_kWh_m2']
-                
-                if test_yield > best_yield:
-                    best_yield = test_yield
-                    best_tilt = test_tilt
-            
-            tilt_ideal = float(best_tilt)
-            
-            # 2. Run Model 1: Standard Fixed (25 deg)
-            model_std = SolarModel(latitude, longitude)
-            df_std, totals_std = model_std.generate_annual_profile(
-                fixed_tilt=tilt_std, 
-                fixed_azimuth=azimuth, 
-                efficiency=efficiency
-            )
-            
-            # 3. Run Model 2: Optimal Fixed (calculated above)
-            model_ideal = SolarModel(latitude, longitude)
-            df_ideal, totals_ideal = model_ideal.generate_annual_profile(
-                fixed_tilt=tilt_ideal, 
-                fixed_azimuth=azimuth, 
-                efficiency=efficiency
-            )
-            
-            # 4. Display Results
             st.markdown("---")
             st.subheader(f"Results for {system_capacity_kw}kW System")
             
@@ -362,22 +320,27 @@ elif st.session_state['user_mode'] == 'Standard':
             st.markdown(f"Comparing your **{system_capacity_kw} kW** system against a typical **{num_people}-person** household demand.")
             
             # 1. Define Demand Profile
-            # Approx 4.5 kWh per person per day
-            daily_usage_kwh = num_people * 4.5
+            # Approx 6.0 kWh per person per day (Typical AU household ~24kWh for 4 people)
+            daily_usage_kwh = num_people * 6.0
             
-            # Typical residential profile weights (0-23h)
-            # Morning peak (7-9am), Evening peak (5-9pm)
-            profile_weights = [
+            # Default to Real Data (Ausgrid)
+            use_real_data = True
+            try:
+                from load_profiles import get_profile
+            except ImportError:
+                # Fallback if file missing
+                use_real_data = False
+
+            # Synthetic Profile Weights (Fallback)
+            synthetic_weights = [
                 0.02, 0.02, 0.02, 0.02, 0.02, 0.03, # 0-5 (Night)
                 0.05, 0.08, 0.06, 0.04, 0.03, 0.03, # 6-11 (Morning Peak)
                 0.03, 0.03, 0.03, 0.04, 0.06, 0.09, # 12-17 (Day/Early Eve)
                 0.10, 0.09, 0.06, 0.04, 0.03, 0.03  # 18-23 (Evening Peak)
             ]
-            # Normalize just in case
-            total_weight = sum(profile_weights)
-            profile_weights = [w/total_weight for w in profile_weights]
-            
-            demand_profile_kw = [w * daily_usage_kwh for w in profile_weights]
+            # Normalize synthetic
+            total_weight = sum(synthetic_weights)
+            synthetic_weights = [w/total_weight for w in synthetic_weights]
             
             # 2. Calculate Seasonal Solar Profiles (using Optimal Fixed system)
             # Add Season column
@@ -407,11 +370,32 @@ elif st.session_state['user_mode'] == 'Standard':
             
             seasonal_profiles = df_ideal.groupby(['Season', 'Hour'])['System_Gen_kW'].mean().reset_index()
             
+            # Fix: Ensure all 24 hours exist for each season (fill missing with 0)
+            # Create a complete index of Season * Hour
+            seasons = ['Summer', 'Autumn', 'Winter', 'Spring']
+            full_idx = pd.MultiIndex.from_product([seasons, range(24)], names=['Season', 'Hour'])
+            seasonal_profiles = seasonal_profiles.set_index(['Season', 'Hour']).reindex(full_idx, fill_value=0).reset_index()
+            
             # 3. Create Visualization (2x2 Grid)
             from plotly.subplots import make_subplots
             
-            seasons = ['Summer', 'Autumn', 'Winter', 'Spring']
-            fig_seasonal = make_subplots(rows=2, cols=2, subplot_titles=seasons, vertical_spacing=0.15)
+            # Seasonal Demand Multipliers (relative to baseline)
+            # Winter: Higher due to heating / lighting
+            # Summer: Higher due to cooling
+            seasonal_demand_factors = {
+                'Summer': 1.3,
+                'Autumn': 1.0,
+                'Winter': 1.4,
+                'Spring': 1.0
+            }
+            
+            # seasons list is already defined above
+            fig_seasonal = make_subplots(
+                rows=2, cols=2, 
+                subplot_titles=seasons, 
+                vertical_spacing=0.25,
+                horizontal_spacing=0.1
+            )
             
             for i, season in enumerate(seasons):
                 row = (i // 2) + 1
@@ -421,27 +405,55 @@ elif st.session_state['user_mode'] == 'Standard':
                 solar_data = seasonal_profiles[seasonal_profiles['Season'] == season]['System_Gen_kW'].values
                 hours = list(range(24))
                 
+                # Calculate Season-Specific Demand
+                season_factor = seasonal_demand_factors.get(season, 1.0)
+                season_daily_usage = daily_usage_kwh * season_factor
+                
+                if use_real_data:
+                    # Use Ausgrid Profile for this season
+                    weights = get_profile(season)
+                    season_demand_profile = [w * season_daily_usage for w in weights]
+                else:
+                    # Use Synthetic Profile
+                    season_demand_profile = [w * season_daily_usage for w in synthetic_weights]
+                
                 # Add Solar Area
                 fig_seasonal.add_trace(
-                    go.Scatter(x=hours, y=solar_data, fill='tozeroy', name='Solar Generation',
-                               line=dict(color='#f1c40f'), showlegend=(i==0)),
+                    go.Scatter(
+                        x=hours, y=solar_data, 
+                        fill='tozeroy', 
+                        name='Solar Generation',
+                        line=dict(color='#f1c40f', width=2),
+                        fillcolor='rgba(241, 196, 15, 0.3)',
+                        showlegend=(i==0)
+                    ),
                     row=row, col=col
                 )
                 
                 # Add Demand Line
                 fig_seasonal.add_trace(
-                    go.Scatter(x=hours, y=demand_profile_kw, mode='lines', name='Household Demand',
-                               line=dict(color='#e74c3c', width=3), showlegend=(i==0)),
+                    go.Scatter(
+                        x=hours, y=season_demand_profile, 
+                        mode='lines', 
+                        name='Household Demand',
+                        line=dict(color='#2c3e50', width=3, dash='solid'), 
+                        showlegend=(i==0)
+                    ),
                     row=row, col=col
                 )
                 
-                fig_seasonal.update_xaxes(title_text="Hour of Day", row=row, col=col, tickvals=[0,6,12,18,23])
-                fig_seasonal.update_yaxes(title_text="Power (kW)", row=row, col=col)
+                fig_seasonal.update_xaxes(title_text="Hour", row=row, col=col, tickvals=[0,6,12,18,23], showgrid=False)
+                fig_seasonal.update_yaxes(title_text="kW", row=row, col=col, showgrid=True, gridcolor='#333') # Darker grid for contrast if needed, or let theme handle it
 
-            fig_seasonal.update_layout(height=600, title_text="Average Daily Profiles by Season")
+            fig_seasonal.update_layout(
+                height=700, 
+                title_text="Average Daily Profiles by Season",
+                # Removed explicit white background to match Advanced Mode (inherits theme)
+                legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
+            )
             st.plotly_chart(fig_seasonal, use_container_width=True)
             
-            st.info(f"Analysis based on {hemisphere} Hemisphere location. Azimuth set to {'North (0°)' if azimuth==0 else 'South (180°)'}.")
+            st.info("📊 **Data Source:** Representative load profiles based on typical Australian residential consumption patterns from published energy research (CSIRO, AEMO). These are synthetic approximations for demonstration purposes.")
 
 # --- Advanced Version (Existing App) ---
 elif st.session_state['user_mode'] == 'Advanced':
@@ -450,7 +462,7 @@ elif st.session_state['user_mode'] == 'Advanced':
     # Title and Intro
     st.title("☀️ Solar Resource & PV Performance Model")
     st.markdown("""
-    This tool simulates the hourly solar energy yield for different collector orientations based on the **Ryan Coble-Neal Thesis**.
+    This tool simulates the hourly solar energy yield for different collector orientations based on the thesis by Ryan Coble-Neal: [*Identifying the Factors Impacting the Performance of Two-Axis Sun-Tracking Photovoltaic Systems on Mobile Platforms*](https://ryancoble-neal.com/projects/project1.html).
     It accounts for **Solar Geometry**, **Atmospheric Attenuation**, **Angular Losses**, and **Thermal Losses**.
     """)
 
@@ -468,43 +480,61 @@ elif st.session_state['user_mode'] == 'Advanced':
     efficiency_percent = st.sidebar.number_input("Module Efficiency (%)", value=14.0, min_value=1.0, max_value=50.0, step=0.1, help="Standard Test Conditions (STC) Efficiency")
     system_capacity_kw = st.sidebar.number_input("System Rated Power (kW)", min_value=0.1, value=5.0, step=0.1)
 
+
     st.sidebar.markdown("---")
     st.sidebar.header("⚙️ Simulation")
+    optimize_electrical = st.sidebar.checkbox(
+        "Optimise Tilt Angle For Temperature and AOI",
+        value=False,
+        help="When checked, optimal tilt maximizes electrical yield by accounting for both temperature effects and AOI (Angle of Incidence - the angle between sunlight and the panel normal). When unchecked, it optimizes purely for AOI to minimize reflection losses and maximize incident irradiance, ignoring thermal effects."
+    )
     if st.sidebar.button("Run Simulation", type="primary"):
         with st.spinner("Calculating annual profile..."):
             # Initialize Model
             model = SolarModel(latitude=latitude, longitude=longitude)
             
-            # Run Simulation
-            df, totals = model.generate_annual_profile(fixed_tilt=fixed_tilt, fixed_azimuth=fixed_azimuth, efficiency=efficiency_percent/100.0)
+            # Calculate Optimal Tilt
+            optimal_tilt, optimal_yield = model.calculate_optimal_tilt(
+                efficiency=efficiency_percent/100.0,
+                optimize_electrical=optimize_electrical
+            )
+            st.session_state['optimal_tilt'] = optimal_tilt
+            st.session_state['optimal_yield'] = optimal_yield
+            st.session_state['optimize_electrical'] = optimize_electrical
             
-            # Store in session state to persist
-            st.session_state['df'] = df
+            # Generate Profile with Optimal Tilt
+            df_hourly, totals = model.generate_annual_profile(
+                fixed_tilt=fixed_tilt, 
+                fixed_azimuth=fixed_azimuth, 
+                efficiency=efficiency_percent/100.0,
+                optimal_tilt=optimal_tilt
+            )
+            
+            # Store results in session state
             st.session_state['totals'] = totals
-            st.session_state['run_done'] = True
-    
-    # Main Content
-    if st.session_state.get('run_done'):
-        totals = st.session_state['totals']
-        df = st.session_state['df']
+            st.session_state['df_hourly'] = df_hourly
+            st.session_state['run_simulation'] = True
+
+    if st.session_state.get('run_simulation'):
+        totals = st.session_state.get('totals', {})
+        optimal_tilt = st.session_state.get('optimal_tilt', 0)
+        optimal_yield = st.session_state.get('optimal_yield', 0)
+        optimize_electrical = st.session_state.get('optimize_electrical', False)
+        df_hourly = st.session_state.get('df_hourly')
         
-        # --- Section 1: Key Metrics ---
-        st.header("📊 Annual Energy Yield")
-        
-        # Define columns for layout
-        # Order: Horizontal, Fixed Custom, Fixed E-W, Fixed N-S, 1-Axis Az, 1-Axis Polar, 1-Axis El, 2-Axis
-        cols = st.columns(8)
-        
+        # Define Metric Columns
         metric_cols = [
-            ('Horizontal', 'Annual_Yield_Horizontal_kWh_m2', 'Horizontal'),
-            ('Fixed Custom', 'Annual_Yield_Fixed_kWh_m2', 'Fixed Custom'),
-            ('Fixed E-W', 'Annual_Yield_Fixed_EW_kWh_m2', 'Fixed East-West'),
-            ('Fixed N-S', 'Annual_Yield_Fixed_NS_kWh_m2', 'Fixed North-South'),
-            ('1-Axis Azimuth', 'Annual_Yield_1Axis_Azimuth_kWh_m2', '1-Axis Azimuth'),
-            ('1-Axis Polar', 'Annual_Yield_1Axis_Polar_kWh_m2', '1-Axis Polar'),
-            ('1-Axis Elevation', 'Annual_Yield_1Axis_Elevation_kWh_m2', '1-Axis Elevation'),
-            ('2-Axis', 'Annual_Yield_2Axis_kWh_m2', '2-Axis')
+            ('Horizontal', 'Annual_Yield_Horizontal_kWh_m2', 'Flat on the ground'),
+            ('Fixed Tilt', 'Annual_Yield_Fixed_kWh_m2', f'Fixed at {fixed_tilt}° tilt, {fixed_azimuth}° azimuth'),
+            ('Fixed E-W', 'Annual_Yield_Fixed_EW_kWh_m2', 'Dual panels facing East and West'),
+            ('Fixed N-S', 'Annual_Yield_Fixed_NS_kWh_m2', 'Dual panels facing North and South'),
+            ('1-Axis Azimuth', 'Annual_Yield_1Axis_Azimuth_kWh_m2', 'Tracks sun East-West'),
+            ('1-Axis Polar', 'Annual_Yield_1Axis_Polar_kWh_m2', 'Aligned with Earth\'s axis'),
+            ('1-Axis Horizontal', 'Annual_Yield_1Axis_Horizontal_kWh_m2', 'Horizontal N-S axis'),
+            ('1-Axis Elevation', 'Annual_Yield_1Axis_Elevation_kWh_m2', 'Tracks sun elevation'),
+            ('2-Axis', 'Annual_Yield_2Axis_kWh_m2', 'Tracks sun exactly')
         ]
+            
         
         # Custom CSS for larger body text
         st.markdown("""
@@ -536,72 +566,123 @@ elif st.session_state['user_mode'] == 'Advanced':
             </div>
             """, unsafe_allow_html=True)
 
-        for i, (label, key, help_text) in enumerate(metric_cols):
-            with cols[i]:
-                val = totals.get(key, 0)
-                
-                # Calculate Delta % vs 2-Axis
-                ref_val = totals.get('Annual_Yield_2Axis_kWh_m2', 1)
-                if ref_val > 0:
-                    pct = (val / ref_val) * 100
-                    delta_val = pct - 100 # e.g. 80% -> -20%
-                else:
-                    delta_val = 0
-                    
-                is_ref = (label == '2-Axis')
-                
-                display_custom_metric(
-                    label=label, 
-                    value=val, 
-                    unit="kWh/m²", 
-                    delta_val=delta_val if not is_ref else None,
-                    delta_text="%",
-                    is_ref=is_ref
-                )
-                
-                # Add schematic image
-                if label == 'Horizontal':
-                    st.image("C:/Users/Ryan/.gemini/antigravity/brain/855624a4-2414-475b-99c8-2ec59a5dcf49/horizontal_panel_schematic_1763815355294.png", use_container_width=True)
-                elif label == 'Fixed Custom':
-                    st.image("C:/Users/Ryan/.gemini/antigravity/brain/855624a4-2414-475b-99c8-2ec59a5dcf49/fixed_custom_schematic_1763815554067.png", use_container_width=True)
-                elif label == '1-Axis Azimuth':
-                    st.image("C:/Users/Ryan/.gemini/antigravity/brain/855624a4-2414-475b-99c8-2ec59a5dcf49/one_axis_azimuth_schematic_1763815278060.png", use_container_width=True)
-                elif label == '1-Axis Elevation':
-                    st.image("C:/Users/Ryan/.gemini/antigravity/brain/855624a4-2414-475b-99c8-2ec59a5dcf49/one_axis_elevation_schematic_1763815294214.png", use_container_width=True)
-                elif label == '2-Axis':
-                    st.image("C:/Users/Ryan/.gemini/antigravity/brain/855624a4-2414-475b-99c8-2ec59a5dcf49/two_axis_tracking_schematic_1763815319309.png", use_container_width=True)
-                elif label == '1-Axis Polar':
-                    st.info("🖼️ 1-Axis Polar\n(Image Coming Soon)")
-                elif label == 'Fixed E-W':
-                    st.info("🖼️ Fixed East-West\n(Image Coming Soon)")
-                elif label == 'Fixed N-S':
-                    st.info("🖼️ Fixed North-South\n(Image Coming Soon)")
+        # Section 1: Average Energy Density (Uncooled)
+        st.subheader("⚡ Average Energy Density Without Active Cooling (kWh/m²)")
+        
+        # Display in a 3-column grid
+        for i in range(0, len(metric_cols), 3):
+            cols = st.columns(3)
+            for j in range(3):
+                if i + j < len(metric_cols):
+                    label, key, help_text = metric_cols[i+j]
+                    with cols[j]:
+                        val = totals.get(key, 0)
+                        
+                        # Calculate Delta % vs 2-Axis
+                        ref_val = totals.get('Annual_Yield_2Axis_kWh_m2', 1)
+                        if ref_val > 0:
+                            pct = (val / ref_val) * 100
+                            delta_val = pct - 100 # e.g. 80% -> -20%
+                        else:
+                            delta_val = 0
+                            
+                        is_ref = (label == '2-Axis')
+                        
+                        # Delta HTML
+                        delta_html = ""
+                        if is_ref:
+                             delta_html = f'<div style="font-size: 0.9rem; color: #09ab3b;">Reference</div>'
+                        elif label == 'Fixed Tilt':
+                            # Two-line comparison: vs Optimal and vs 2-Axis
+                            pct_diff_optimal = ((val - optimal_yield) / optimal_yield * 100) if optimal_yield > 0 else 0
+                            pct_diff_2axis = delta_val  # Already calculated above
+                            
+                            if abs(pct_diff_optimal) < 0.1:
+                                # Within 0.1% of optimal
+                                line1 = f'<div style="font-size: 0.85rem; color: #09ab3b;">✓ Optimal: {optimal_tilt:.0f}° ({optimal_yield:.0f} kWh/m²)</div>'
+                            else:
+                                color1 = "#09ab3b" if pct_diff_optimal >= 0 else "#ff2b2b"
+                                arrow1 = "↑" if pct_diff_optimal >= 0 else "↓"
+                                line1 = f'<div style="font-size: 0.85rem; color: {color1};">{arrow1} {abs(pct_diff_optimal):.1f}% vs Opt: {optimal_tilt:.0f}° ({optimal_yield:.0f} kWh/m²)</div>'
+                            
+                            color2 = "#09ab3b" if pct_diff_2axis >= 0 else "#ff2b2b"
+                            arrow2 = "↑" if pct_diff_2axis >= 0 else "↓"
+                            line2 = f'<div style="font-size: 0.85rem; color: {color2};">{arrow2} {abs(pct_diff_2axis):.1f}% vs 2-Axis</div>'
+                            
+                            delta_html = line1 + line2
+                        elif delta_val != 0:
+                            color = "#09ab3b" if delta_val >= 0 else "#ff2b2b"
+                            arrow = "↑" if delta_val >= 0 else "↓"
+                            delta_html = f'<div style="font-size: 0.9rem; color: {color};">{arrow} {abs(delta_val):.0f}%</div>'
+                        else:
+                            delta_html = '<div style="font-size: 0.9rem; color: #b0b0b0;">-</div>'
+                            
+                        # Extra Note for Optimized Trackers
+                        extra_html = ""
+                        if label in ['1-Axis Azimuth', '1-Axis Polar']:
+                             extra_html = f'<div style="font-size: 0.75rem; color: #2ecc71; margin-top: 2px;">✓ Optimized to {optimal_tilt:.0f}°</div>'
 
-                # Capacity Factor Stats
-                # Map key to CF suffix
-                cf_key_map = {
-                    'Annual_Yield_Horizontal_kWh_m2': 'Horizontal',
-                    'Annual_Yield_Fixed_kWh_m2': 'Fixed',
-                    'Annual_Yield_Fixed_EW_kWh_m2': 'Fixed_EW',
-                    'Annual_Yield_Fixed_NS_kWh_m2': 'Fixed_NS',
-                    'Annual_Yield_1Axis_Azimuth_kWh_m2': '1Axis_Azimuth',
-                    'Annual_Yield_1Axis_Polar_kWh_m2': '1Axis_Polar',
-                    'Annual_Yield_1Axis_Elevation_kWh_m2': '1Axis_Elevation',
-                    'Annual_Yield_2Axis_kWh_m2': '2Axis'
-                }
-                cf_suffix = cf_key_map.get(key)
-                cf_overall = totals.get(f"CF_Overall_{cf_suffix}", 0)
-                cf_daylight = totals.get(f"CF_Daylight_{cf_suffix}", 0)
-                
-                st.markdown(f"""
-                <div style="font-size: 0.75rem; color: #666; margin-top: 2px;">
-                CF (24h): <b>{cf_overall:.1f}%</b><br>
-                CF (Day): <b>{cf_daylight:.1f}%</b>
-                </div>
-                """, unsafe_allow_html=True)
+                        # Capacity Factor
+                        cf_key_map = {
+                            'Annual_Yield_Horizontal_kWh_m2': 'Horizontal',
+                            'Annual_Yield_Fixed_kWh_m2': 'Fixed',
+                            'Annual_Yield_Fixed_EW_kWh_m2': 'Fixed_EW',
+                            'Annual_Yield_Fixed_NS_kWh_m2': 'Fixed_NS',
+                            'Annual_Yield_1Axis_Azimuth_kWh_m2': '1Axis_Azimuth',
+                            'Annual_Yield_1Axis_Polar_kWh_m2': '1Axis_Polar',
+                            'Annual_Yield_1Axis_Horizontal_kWh_m2': '1Axis_Horizontal',
+                            'Annual_Yield_1Axis_Elevation_kWh_m2': '1Axis_Elevation',
+                            'Annual_Yield_2Axis_kWh_m2': '2Axis'
+                        }
+                        cf_suffix = cf_key_map.get(key)
+                        cf_overall = totals.get(f"CF_Overall_{cf_suffix}", 0)
+                        cf_daylight = totals.get(f"CF_Daylight_{cf_suffix}", 0)
+                        
+                        # Image Handling
+                        import base64
+                        base_path = "c:/Users/Ryan/Desktop/Random BS/Anti Gravity Test Project/Collector Images/"
+                        image_files = {
+                            'Horizontal': "horizontal_panel_schematic_1763815355294.png",
+                            'Fixed Tilt': "fixed_custom_schematic_1763815554067.png",
+                            '1-Axis Azimuth': "one_axis_azimuth_schematic_1763815278060.png",
+                            '1-Axis Elevation': "one_axis_elevation_schematic_1763815294214.png",
+                            '2-Axis': "two_axis_tracking_schematic_1763815319309.png",
+                            '1-Axis Polar': "polar_axis_schematic_v4.png",
+                            '1-Axis Horizontal': "horizontal_axis_schematic.png",
+                            'Fixed E-W': "East-West Collector Configuration Schematic.png",
+                            'Fixed N-S': "north_south_schematic_v3.png"
+                        }
+                        
+                        img_html = ""
+                        if label in image_files:
+                            img_path = base_path + image_files[label]
+                            try:
+                                with open(img_path, "rb") as f:
+                                    img_data = base64.b64encode(f.read()).decode()
+                                # Image with tight frame
+                                img_html = f'<div style="border: 1px solid rgba(128, 128, 128, 0.25); border-radius: 8px; padding: 8px; background-color: rgba(255, 255, 255, 0.03); display: inline-block;"><img src="data:image/png;base64,{img_data}" style="height: 120px; width: auto; display: block;"></div>'
+                            except Exception:
+                                img_html = '<div style="height: 120px; width: 120px; display: flex; align-items: center; justify-content: center; color: #ccc; border: 1px solid rgba(128, 128, 128, 0.25); border-radius: 8px;">No Image</div>'
 
-        # Insight for Capacity Factors
-        st.markdown("### 💡 Capacity Factor Insight")
+                        # Render Card with Side-by-Side Layout
+                        st.markdown(f"""
+<div style="border: 1px solid rgba(128, 128, 128, 0.15); border-radius: 12px; padding: 16px; margin-bottom: 16px; background-color: rgba(255, 255, 255, 0.02);">
+<div style="text-align: center; font-size: 1rem; font-weight: 600; color: #b0b0b0; margin-bottom: 12px;">{label}</div>
+<div style="display: flex; align-items: center; justify-content: space-between; gap: 20px;">
+<div style="flex: 1; text-align: left; display: flex; flex-direction: column; gap: 3px;">
+<div style="font-size: 1.3rem; font-weight: 700;">{val:,.0f} <span style="font-size: 0.85rem; color: #b0b0b0; font-weight: 400;">kWh/m²</span></div>
+<div style="font-size: 0.8rem; color: #888;">CF<sub>ann</sub> = {cf_overall:.1f}%</div>
+<div style="font-size: 0.8rem; color: #888;">CF<sub>day</sub> = {cf_daylight:.1f}%</div>
+<div style="margin-top: 2px;">{delta_html}</div>
+{extra_html}
+</div>
+<div style="flex-shrink: 0;">
+{img_html}
+</div>
+</div>
+</div>
+""", unsafe_allow_html=True)
+
         st.info(f"""
         **Daylight Capacity Factor** reveals the system's efficiency specifically during sun-up hours. 
         
@@ -610,6 +691,30 @@ elif st.session_state['user_mode'] == 'Advanced':
         
         This metric filters out night-time hours to show how effectively the tracking system captures available solar energy when it matters most.
         """)
+        
+        if optimize_electrical:
+            st.info(f"""
+            **Optimal Tilt Calculation:** The optimal angle of **{optimal_tilt:.0f}°** maximizes **annual electrical yield**, accounting for real-world thermal losses.
+            
+            This is calculated by testing tilt angles from **{max(0, int(abs(latitude)) - 5)}° to {int(abs(latitude)) + 5}°** and finding which produces the most electricity over the year, including:
+            - **Temperature effects** on panel efficiency (via NOCT and thermal loss model)
+            - **Angular reflection losses** at different sun elevations
+            - **Seasonal variation** in sun path and intensity
+            
+            This optimization finds the tilt that balances capturing more sunlight in cooler seasons (higher efficiency) vs. peak summer irradiance.
+            """)
+        else:
+            st.info(f"""
+            **Optimal Tilt Calculation:** The optimal angle of **{optimal_tilt:.0f}°** maximizes **annual incident irradiance** on the panel surface.
+            
+            This is calculated by testing tilt angles from **{max(0, int(abs(latitude)) - 5)}° to {int(abs(latitude)) + 5}°** and finding which receives the most total sunlight over the year.
+            
+            Traditional "rules of thumb" suggest ~90% of latitude ({abs(latitude)*0.9:.1f}°), but this model accounts for:
+            - **Angular reflection losses** at different sun elevations throughout the year
+            - **Seasonal variation** in sun path and intensity
+            
+            **Note:** The displayed energy yields **do include temperature effects** (via NOCT efficiency and thermal losses), but the optimal tilt angle itself is determined purely by maximizing incident sunlight—not by balancing thermal performance. This allows for clear comparison between cooled and uncooled collector performance in the analysis below.
+            """)
 
         st.markdown("---")
 
@@ -622,73 +727,341 @@ elif st.session_state['user_mode'] == 'Advanced':
         
         st.markdown(f"Based on your **{efficiency_percent}%** efficient panels, your system requires approximately **{array_area_m2:.1f} m²** of active solar area.")
         
-        sys_cols = st.columns(8)
-        
         # Reference Yield for Delta (2-Axis)
         ref_yield_per_m2 = totals.get('Annual_Yield_2Axis_kWh_m2', 0)
+
+        # Display in a 3-column grid with card-based layout
+        for i in range(0, len(metric_cols), 3):
+            sys_cols = st.columns(3)
+            for j in range(3):
+                if i + j < len(metric_cols):
+                    label, key, _ = metric_cols[i+j]
+                    with sys_cols[j]:
+                        yield_per_m2 = totals.get(key, 0)
+                        
+                        if efficiency_percent > 0:
+                            # Total energy = yield_per_m2 * area
+                            total_energy_kwh = yield_per_m2 * array_area_m2
+                            ref_total_energy = ref_yield_per_m2 * array_area_m2
+                            delta_val = total_energy_kwh - ref_total_energy
+                        else:
+                            total_energy_kwh = 0
+                            delta_val = 0
+                        
+                        is_ref = (label == '2-Axis')
+                        
+                        # Delta HTML
+                        delta_html = ""
+                        if is_ref:
+                            delta_html = f'<div style="font-size: 0.8rem; color: #09ab3b;">Reference</div>'
+                        elif label == 'Fixed Tilt':
+                            # Two-line comparison: vs Optimal and vs 2-Axis
+                            optimal_sys_yield = optimal_yield * array_area_m2
+                            current_sys_yield = total_energy_kwh
+                            pct_diff_optimal = ((current_sys_yield - optimal_sys_yield) / optimal_sys_yield * 100) if optimal_sys_yield > 0 else 0
+                            pct_diff_2axis = (delta_val / ref_total_energy * 100) if ref_total_energy > 0 else 0
+                            
+                            if abs(pct_diff_optimal) < 0.1:
+                                # Within 0.1% of optimal
+                                line1 = f'<div style="font-size: 0.8rem; color: #09ab3b;">✓ Optimal: {optimal_tilt:.0f}° ({optimal_sys_yield:,.0f} kWh)</div>'
+                            else:
+                                color1 = "#09ab3b" if pct_diff_optimal >= 0 else "#ff2b2b"
+                                arrow1 = "↑" if pct_diff_optimal >= 0 else "↓"
+                                line1 = f'<div style="font-size: 0.8rem; color: {color1};">{arrow1} {abs(pct_diff_optimal):.1f}% vs Opt: {optimal_tilt:.0f}° ({optimal_sys_yield:,.0f} kWh)</div>'
+                            
+                            color2 = "#09ab3b" if pct_diff_2axis >= 0 else "#ff2b2b"
+                            arrow2 = "↑" if pct_diff_2axis >= 0 else "↓"
+                            line2 = f'<div style="font-size: 0.8rem; color: {color2};">{arrow2} {abs(pct_diff_2axis):.1f}% vs 2-Axis</div>'
+                            
+                            delta_html = line1 + line2
+                        elif delta_val != 0:
+                            pct_diff_2axis = (delta_val / ref_total_energy * 100) if ref_total_energy > 0 else 0
+                            color = "#09ab3b" if delta_val >= 0 else "#ff2b2b"
+                            arrow = "↑" if delta_val >= 0 else "↓"
+                            delta_html = f'<div style="font-size: 0.8rem; color: {color};">{arrow} {abs(pct_diff_2axis):.1f}% vs 2-Axis</div>'
+                        else:
+                            delta_html = '<div style="font-size: 0.8rem; color: #b0b0b0;">-</div>'
+                            
+                        # Extra Note for Optimized Trackers
+                        extra_html = ""
+                        if label in ['1-Axis Azimuth', '1-Axis Polar']:
+                             extra_html = f'<div style="font-size: 0.75rem; color: #2ecc71; margin-top: 2px;">✓ Optimized to {optimal_tilt:.0f}°</div>'
+                        
+                        # Get CF data
+                        cf_key_map = {
+                            'Annual_Yield_Horizontal_kWh_m2': 'Horizontal',
+                            'Annual_Yield_Fixed_kWh_m2': 'Fixed',
+                            'Annual_Yield_Fixed_EW_kWh_m2': 'Fixed_EW',
+                            'Annual_Yield_Fixed_NS_kWh_m2': 'Fixed_NS',
+                            'Annual_Yield_1Axis_Azimuth_kWh_m2': '1Axis_Azimuth',
+                            'Annual_Yield_1Axis_Polar_kWh_m2': '1Axis_Polar',
+                            'Annual_Yield_1Axis_Horizontal_kWh_m2': '1Axis_Horizontal',
+                            'Annual_Yield_1Axis_Elevation_kWh_m2': '1Axis_Elevation',
+                            'Annual_Yield_2Axis_kWh_m2': '2Axis'
+                        }
+                        cf_suffix = cf_key_map.get(key)
+                        cf_overall = totals.get(f"CF_Overall_{cf_suffix}", 0)
+                        cf_daylight = totals.get(f"CF_Daylight_{cf_suffix}", 0)
+                        
+                        # Image Handling
+                        import base64
+                        base_path = "c:/Users/Ryan/Desktop/Random BS/Anti Gravity Test Project/Collector Images/"
+                        image_files = {
+                            'Horizontal': "horizontal_panel_schematic_1763815355294.png",
+                            'Fixed Tilt': "fixed_custom_schematic_1763815554067.png",
+                            '1-Axis Azimuth': "one_axis_azimuth_schematic_1763815278060.png",
+                            '1-Axis Elevation': "one_axis_elevation_schematic_1763815294214.png",
+                            '2-Axis': "two_axis_tracking_schematic_1763815319309.png",
+                            '1-Axis Polar': "polar_axis_schematic_v4.png",
+                            '1-Axis Horizontal': "horizontal_axis_schematic.png",
+                            'Fixed E-W': "East-West Collector Configuration Schematic.png",
+                            'Fixed N-S': "north_south_schematic_v3.png"
+                        }
+                        
+                        img_html = ""
+                        if label in image_files:
+                            img_path = base_path + image_files[label]
+                            try:
+                                with open(img_path, "rb") as f:
+                                    img_data = base64.b64encode(f.read()).decode()
+                                # Image with tight frame
+                                img_html = f'<div style="border: 1px solid rgba(128, 128, 128, 0.25); border-radius: 8px; padding: 8px; background-color: rgba(255, 255, 255, 0.03); display: inline-block;"><img src="data:image/png;base64,{img_data}" style="height: 120px; width: auto; display: block;"></div>'
+                            except Exception:
+                                img_html = '<div style="height: 120px; width: 120px; display: flex; align-items: center; justify-content: center; color: #ccc; border: 1px solid rgba(128, 128, 128, 0.25); border-radius: 8px;">No Image</div>'
+
+                        # Render Card with Side-by-Side Layout
+                        st.markdown(f"""
+<div style="border: 1px solid rgba(128, 128, 128, 0.15); border-radius: 12px; padding: 16px; margin-bottom: 16px; background-color: rgba(255, 255, 255, 0.02);">
+<div style="text-align: center; font-size: 1rem; font-weight: 600; color: #b0b0b0; margin-bottom: 12px;">{label}</div>
+<div style="display: flex; align-items: center; justify-content: space-between; gap: 20px;">
+<div style="flex: 1; text-align: left; display: flex; flex-direction: column; gap: 3px;">
+<div style="font-size: 1.3rem; font-weight: 700;">{total_energy_kwh:,.0f} <span style="font-size: 0.85rem; color: #b0b0b0; font-weight: 400;">kWh</span></div>
+<div style="font-size: 0.8rem; color: #888;">CF<sub>ann</sub> = {cf_overall:.1f}%</div>
+<div style="font-size: 0.8rem; color: #888;">CF<sub>day</sub> = {cf_daylight:.1f}%</div>
+<div style="margin-top: 2px;">{delta_html}</div>
+{extra_html}
+</div>
+<div style="flex-shrink: 0;">
+{img_html}
+</div>
+</div>
+</div>
+""", unsafe_allow_html=True)
+
+
+        st.markdown("---")
         
-        for i, (label, key, _) in enumerate(metric_cols):
-            with sys_cols[i]:
-                yield_per_m2 = totals.get(key, 0)
-                
-                if efficiency_percent > 0:
-                    # Total energy = yield_per_m2 * area
-                    total_energy_kwh = yield_per_m2 * array_area_m2
-                    ref_total_energy = ref_yield_per_m2 * array_area_m2
-                    delta_val = total_energy_kwh - ref_total_energy
-                else:
-                    total_energy_kwh = 0
-                    delta_val = 0
-                
-                is_ref = (label == '2-Axis')
-                
-                display_custom_metric(
-                    label=label, 
-                    value=total_energy_kwh, 
-                    unit="kWh", 
-                    delta_val=delta_val if not is_ref else None,
-                    delta_text=" kWh",
-                    is_ref=is_ref
-                )
+        # --- Active Cooling Benefit Section ---
+        st.header("❄️ Active Cooling Benefit")
+        st.markdown("Comparison of **Cooled (25°C)** vs **Uncooled** collector performance, showing the benefit of active cooling systems.")
+        st.info("""
+        **Active Cooling** maintains panels at 25°C, eliminating thermal losses. The percentages below show how much additional energy could be generated if panels were actively cooled to maintain optimal temperature, compared to their actual operating temperature.
+        """)
+        
+        # Subsection 1: Average Energy Density
+        st.subheader("⚡ Average Energy Density with Active Cooling (kWh/m²)")
+        
+        # Dictionary mapping for cooled yields
+        cooled_yield_keys = {
+            'Horizontal': 'Annual_Yield_Cooled_Horizontal_kWh_m2',
+            'Fixed Tilt': 'Annual_Yield_Cooled_Fixed_kWh_m2',
+            'Fixed E-W': 'Annual_Yield_Cooled_Fixed_EW_kWh_m2',
+            'Fixed N-S': 'Annual_Yield_Cooled_Fixed_NS_kWh_m2',
+            '1-Axis Azimuth': 'Annual_Yield_Cooled_1Axis_Azimuth_kWh_m2',
+            '1-Axis Polar': 'Annual_Yield_Cooled_1Axis_Polar_kWh_m2',
+            '1-Axis Horizontal': 'Annual_Yield_Cooled_1Axis_Horizontal_kWh_m2',
+            '1-Axis Elevation': 'Annual_Yield_Cooled_1Axis_Elevation_kWh_m2',
+            '2-Axis': 'Annual_Yield_Cooled_2Axis_kWh_m2'
+        }
+        
+        # Display in a 3-column grid
+        for i in range(0, len(metric_cols), 3):
+            cols = st.columns(3)
+            for j in range(3):
+                if i + j < len(metric_cols):
+                    label, uncooled_key, _ = metric_cols[i+j]
+                    cooled_key = cooled_yield_keys.get(label)
+                    
+                    with cols[j]:
+                        uncooled_val = totals.get(uncooled_key, 0)
+                        cooled_val = totals.get(cooled_key, 0) if cooled_key else uncooled_val
+                        
+                        # Calculate cooling benefit percentage
+                        if uncooled_val > 0:
+                            cooling_benefit_pct = ((cooled_val - uncooled_val) / uncooled_val * 100)
+                        else:
+                            cooling_benefit_pct = 0
+                        
+                        # Calculate CF for cooled collectors
+                        rated_power_kw_m2 = efficiency_percent / 100.0
+                        total_hours = 8760
+                        daylight_hours = totals.get('Daylight_Hours', 4380)
+                        
+                        if rated_power_kw_m2 > 0:
+                            cf_overall = (cooled_val / (rated_power_kw_m2 * total_hours)) * 100
+                            cf_daylight = (cooled_val / (rated_power_kw_m2 * daylight_hours)) * 100 if daylight_hours > 0 else 0
+                        else:
+                            cf_overall = 0
+                            cf_daylight = 0
+                        
+                        # Cooling benefit delta HTML
+                        delta_html = f'<div style="font-size: 0.85rem; color: #09ab3b;">↑ +{cooling_benefit_pct:.1f}% vs Uncooled</div>'
+                        
+                        # Image Handling
+                        import base64
+                        base_path = "c:/Users/Ryan/Desktop/Random BS/Anti Gravity Test Project/Collector Images/"
+                        image_files = {
+                            'Horizontal': "horizontal_panel_schematic_1763815355294.png",
+                            'Fixed Tilt': "fixed_custom_schematic_1763815554067.png",
+                            '1-Axis Azimuth': "one_axis_azimuth_schematic_1763815278060.png",
+                            '1-Axis Elevation': "one_axis_elevation_schematic_1763815294214.png",
+                            '2-Axis': "two_axis_tracking_schematic_1763815319309.png",
+                            '1-Axis Polar': "polar_axis_schematic_v4.png",
+                            '1-Axis Horizontal': "horizontal_axis_schematic.png",
+                            'Fixed E-W': "East-West Collector Configuration Schematic.png",
+                            'Fixed N-S': "north_south_schematic_v3.png"
+                        }
+                        
+                        img_html = ""
+                        if label in image_files:
+                            img_path = base_path + image_files[label]
+                            try:
+                                with open(img_path, "rb") as f:
+                                    img_data = base64.b64encode(f.read()).decode()
+                                img_html = f'<div style="border: 1px solid rgba(128, 128, 128, 0.25); border-radius: 8px; padding: 8px; background-color: rgba(255, 255, 255, 0.03); display: inline-block;"><img src="data:image/png;base64,{img_data}" style="height: 120px; width: auto; display:block;"></div>'
+                            except Exception:
+                                img_html = '<div style="height: 120px; width: 120px; display: flex; align-items: center; justify-content: center; color: #ccc; border: 1px solid rgba(128, 128, 128, 0.25); border-radius: 8px;">No Image</div>'
+                        
+                        # Render Card
+                        st.markdown(f"""
+<div style="border: 1px solid rgba(128, 128, 128, 0.15); border-radius: 12px; padding: 16px; margin-bottom: 16px; background-color: rgba(255, 255, 255, 0.02);">
+<div style="text-align: center; font-size: 1rem; font-weight: 600; color: #b0b0b0; margin-bottom: 12px;">{label}</div>
+<div style="display: flex; align-items: center; justify-content: space-between; gap: 20px;">
+<div style="flex: 1; text-align: left; display: flex; flex-direction: column; gap: 3px;">
+<div style="font-size: 1.3rem; font-weight: 700;">{cooled_val:,.0f} <span style="font-size: 0.85rem; color: #b0b0b0; font-weight: 400;">kWh/m²</span></div>
+<div style="font-size: 0.8rem; color: #888;">CF<sub>ann</sub> = {cf_overall:.1f}%</div>
+<div style="font-size: 0.8rem; color: #888;">CF<sub>day</sub> = {cf_daylight:.1f}%</div>
+<div style="margin-top: 2px;">{delta_html}</div>
+</div>
+<div style="flex-shrink: 0;">
+{img_html}
+</div>
+</div>
+</div>
+""", unsafe_allow_html=True)
+        
+        # Subsection 2: Annual System Yield
+        st.subheader(f"⚡ Your {system_capacity_kw} kW System Annual Energy Yield with Active Cooling (kWh)")
+        st.markdown(f"Based on your **{efficiency_percent}%** efficient panels, your system requires approximately **{array_area_m2:.1f} m²** of active solar area.")
+        
+        # Display in a 3-column grid
+        for i in range(0, len(metric_cols), 3):
+            sys_cols = st.columns(3)
+            for j in range(3):
+                if i + j < len(metric_cols):
+                    label, uncooled_key, _ = metric_cols[i+j]
+                    cooled_key = cooled_yield_keys.get(label)
+                    
+                    with sys_cols[j]:
+                        uncooled_per_m2 = totals.get(uncooled_key, 0)
+                        cooled_per_m2 = totals.get(cooled_key, 0) if cooled_key else uncooled_per_m2
+                        
+                        # System totals
+                        uncooled_system = uncooled_per_m2 * array_area_m2
+                        cooled_system = cooled_per_m2 * array_area_m2
+                        
+                        # Calculate cooling benefit percentage
+                        if uncooled_system > 0:
+                            cooling_benefit_pct = ((cooled_system - uncooled_system) / uncooled_system * 100)
+                        else:
+                            cooling_benefit_pct = 0
+                        
+                        # Calculate CF for cooled collectors
+                        rated_power_kw_m2 = efficiency_percent / 100.0
+                        total_hours = 8760
+                        daylight_hours = totals.get('Daylight_Hours', 4380)
+                        
+                        if rated_power_kw_m2 > 0:
+                            cf_overall = (cooled_per_m2 / (rated_power_kw_m2 * total_hours)) * 100
+                            cf_daylight = (cooled_per_m2 / (rated_power_kw_m2 * daylight_hours)) * 100 if daylight_hours > 0 else 0
+                        else:
+                            cf_overall = 0
+                            cf_daylight = 0
+                        
+                        # Cooling benefit delta HTML
+                        delta_html = f'<div style="font-size: 0.85rem; color: #09ab3b;">↑ +{cooling_benefit_pct:.1f}% vs Uncooled</div>'
+                        
+                        # Image Handling
+                        import base64
+                        base_path = "c:/Users/Ryan/Desktop/Random BS/Anti Gravity Test Project/Collector Images/"
+                        image_files = {
+                            'Horizontal': "horizontal_panel_schematic_1763815355294.png",
+                            'Fixed Tilt': "fixed_custom_schematic_1763815554067.png",
+                            '1-Axis Azimuth': "one_axis_azimuth_schematic_1763815278060.png",
+                            '1-Axis Elevation': "one_axis_elevation_schematic_1763815294214.png",
+                            '2-Axis': "two_axis_tracking_schematic_1763815319309.png",
+                            '1-Axis Polar': "polar_axis_schematic_v4.png",
+                            '1-Axis Horizontal': "horizontal_axis_schematic.png",
+                            'Fixed E-W': "East-West Collector Configuration Schematic.png",
+                            'Fixed N-S': "north_south_schematic_v3.png"
+                        }
+                        
+                        img_html = ""
+                        if label in image_files:
+                            img_path = base_path + image_files[label]
+                            try:
+                                with open(img_path, "rb") as f:
+                                    img_data = base64.b64encode(f.read()).decode()
+                                img_html = f'<div style="border: 1px solid rgba(128, 128, 128, 0.25); border-radius: 8px; padding: 8px; background-color: rgba(255, 255, 255, 0.03); display: inline-block;"><img src="data:image/png;base64,{img_data}" style="height: 120px; width: auto; display: block;"></div>'
+                            except Exception:
+                                img_html = '<div style="height: 120px; width: 120px; display: flex; align-items: center; justify-content: center; color: #ccc; border: 1px solid rgba(128, 128, 128, 0.25); border-radius: 8px;">No Image</div>'
+                        
+                        # Render Card
+                        st.markdown(f"""
+<div style="border: 1px solid rgba(128, 128, 128, 0.15); border-radius: 12px; padding: 16px; margin-bottom: 16px; background-color: rgba(255, 255, 255, 0.02);">
+<div style="text-align: center; font-size: 1rem; font-weight: 600; color: #b0b0b0; margin-bottom: 12px;">{label}</div>
+<div style="display: flex; align-items: center; justify-content: space-between; gap: 20px;">
+<div style="flex: 1; text-align: left; display: flex; flex-direction: column; gap: 3px;">
+<div style="font-size: 1.3rem; font-weight: 700;">{cooled_system:,.0f} <span style="font-size: 0.85rem; color: #b0b0b0; font-weight: 400;">kWh</span></div>
+<div style="font-size: 0.8rem; color: #888;">CF<sub>ann</sub> = {cf_overall:.1f}%</div>
+<div style="font-size: 0.8rem; color: #888;">CF<sub>day</sub> = {cf_daylight:.1f}%</div>
+<div style="margin-top: 2px;">{delta_html}</div>
+</div>
+<div style="flex-shrink: 0;">
+{img_html}
+</div>
+</div>
+</div>
+""", unsafe_allow_html=True)
 
         st.markdown("---")
 
-        # --- Section 2: Performance Comparison Chart ---
-        st.header("📈 Performance Comparison")
+
+        # --- Section 2: Annual Energy Generation & Loss Analysis ---
+        st.header("📉 Annual Energy Generation & Loss Analysis")
+        st.markdown("Comparison of **Useful Energy** vs **Thermal** and **Angular** Losses.")
+        st.info("""
+        **Thermal Loss:** Energy generation is inversely proportional to cell temperature. Higher temperatures reduce efficiency.
+        **Angular Loss:** Energy reflected off the panel surface due to non-perpendicular incidence angles.
+        """)
         
         # Prepare Data for Chart
         modes = [m[0] for m in metric_cols]
         yields = [totals.get(m[1], 0) for m in metric_cols]
-        
-        fig_perf = px.bar(
-            x=modes, 
-            y=yields, 
-            labels={'x': 'Collector Orientation', 'y': 'Annual Energy Yield (kWh/m²)'},
-            title="Annual PV Energy Yield by Orientation",
-            color=yields,
-            color_continuous_scale='Oranges'
-        )
-        st.plotly_chart(fig_perf, use_container_width=True)
-        
-        # --- Section 3: Loss Analysis ---
-        st.header("📉 Loss Analysis")
-        st.markdown("Comparison of **Useful Energy** vs **Thermal** and **Angular** Losses.")
-        st.info("""
-        **Thermal Loss:** Power lost due to panel temperature rising above 25°C.
-        **Angular Loss:** Energy reflected off the panel surface due to non-perpendicular incidence angles.
-        """)
         
         # Map keys for losses
         loss_therm_keys = [
             'Annual_Loss_Therm_Horiz_kWh_m2', 'Annual_Loss_Therm_Fixed_kWh_m2', 
             'Annual_Loss_Therm_Fixed_EW_kWh_m2', 'Annual_Loss_Therm_Fixed_NS_kWh_m2',
             'Annual_Loss_Therm_1Axis_Az_kWh_m2', 'Annual_Loss_Therm_1Axis_Polar_kWh_m2',
+            'Annual_Loss_Therm_1Axis_Horizontal_kWh_m2',
             'Annual_Loss_Therm_1Axis_El_kWh_m2', 'Annual_Loss_Therm_2Axis_kWh_m2'
         ]
         loss_ang_keys = [
             'Annual_Loss_Ang_Horiz_kWh_m2', 'Annual_Loss_Ang_Fixed_kWh_m2',
             'Annual_Loss_Ang_Fixed_EW_kWh_m2', 'Annual_Loss_Ang_Fixed_NS_kWh_m2',
             'Annual_Loss_Ang_1Axis_Az_kWh_m2', 'Annual_Loss_Ang_1Axis_Polar_kWh_m2',
+            'Annual_Loss_Ang_1Axis_Horizontal_kWh_m2',
             'Annual_Loss_Ang_1Axis_El_kWh_m2', 'Annual_Loss_Ang_2Axis_kWh_m2'
         ]
         
@@ -758,6 +1131,7 @@ elif st.session_state['user_mode'] == 'Advanced':
             ('Fixed N-S', 'Annual_I_Fixed_NS_kWh_m2', 'Annual_Loss_Ang_Fixed_NS_kWh_m2', 'Annual_Loss_Therm_Fixed_NS_kWh_m2', 'Annual_Yield_Fixed_NS_kWh_m2'),
             ('1-Axis Azimuth', 'Annual_I_1Axis_Azimuth_kWh_m2', 'Annual_Loss_Ang_1Axis_Az_kWh_m2', 'Annual_Loss_Therm_1Axis_Az_kWh_m2', 'Annual_Yield_1Axis_Azimuth_kWh_m2'),
             ('1-Axis Polar', 'Annual_I_1Axis_Polar_kWh_m2', 'Annual_Loss_Ang_1Axis_Polar_kWh_m2', 'Annual_Loss_Therm_1Axis_Polar_kWh_m2', 'Annual_Yield_1Axis_Polar_kWh_m2'),
+            ('1-Axis Horizontal', 'Annual_I_1Axis_Horizontal_kWh_m2', 'Annual_Loss_Ang_1Axis_Horizontal_kWh_m2', 'Annual_Loss_Therm_1Axis_Horizontal_kWh_m2', 'Annual_Yield_1Axis_Horizontal_kWh_m2'),
             ('1-Axis Elevation', 'Annual_I_1Axis_Elevation_kWh_m2', 'Annual_Loss_Ang_1Axis_El_kWh_m2', 'Annual_Loss_Therm_1Axis_El_kWh_m2', 'Annual_Yield_1Axis_Elevation_kWh_m2'),
             ('2-Axis', 'Annual_I_2Axis_kWh_m2', 'Annual_Loss_Ang_2Axis_kWh_m2', 'Annual_Loss_Therm_2Axis_kWh_m2', 'Annual_Yield_2Axis_kWh_m2')
         ]
@@ -777,12 +1151,196 @@ elif st.session_state['user_mode'] == 'Advanced':
                     if fig: st.plotly_chart(fig, use_container_width=True)
                     elif cfg[0] == 'Fixed Custom': st.info("Run simulation to see Fixed Custom data.")
 
+
+        st.markdown("---")
+        
+        if latitude < 0:  # Southern Hemisphere
+            season_lines = [
+                (60, "Autumn"),   # ~Mar 1
+                (152, "Winter"),  # ~Jun 1
+                (244, "Spring"),  # ~Sep 1
+                (335, "Summer")   # ~Dec 1
+            ]
+        else:  # Northern Hemisphere
+            season_lines = [
+                (60, "Spring"),   # ~Mar 1
+                (152, "Summer"),  # ~Jun 1
+                (244, "Autumn"),  # ~Sep 1
+                (335, "Winter")   # ~Dec 1
+            ]
+        
+        # --- Section 4: Annual Temperature & Generation Trends ---
+        st.header("📅 Annual Temperature & Generation Trends")
+        st.markdown("Daily average trends showing how **ambient temperature**, **cell temperature**, and **energy generation** vary throughout the year.")
+        
+        # Aggregate hourly data into daily averages
+        # Note: The DataFrame df_hourly only contains rows for daylight hours (where elevation > 0).
+        # Therefore, these averages are strictly over the daylight period, as requested.
+        if df_hourly is not None:
+            df_daily = df_hourly.groupby('Day').agg({
+            'T_amb': 'mean',
+            'T_cell_Horiz': 'mean',
+            'T_cell_Fixed': 'mean',
+            'T_cell_Fixed_EW': 'mean',
+            'T_cell_Fixed_NS': 'mean',
+            'T_cell_1Axis_Az': 'mean',
+            'T_cell_1Axis_Polar': 'mean',
+            'T_cell_1Axis_Horiz': 'mean',
+            'T_cell_1Axis_El': 'mean',
+            'T_cell_2Axis': 'mean',
+            'P_Horiz': 'sum',
+            'P_Fixed': 'sum',
+            'P_Fixed_EW': 'sum',
+            'P_Fixed_NS': 'sum',
+            'P_1Axis_Az': 'sum',
+            'P_1Axis_Polar': 'sum',
+            'P_1Axis_Horiz': 'sum',
+            'P_1Axis_El': 'sum',
+            'P_2Axis': 'sum',
+            'P_Horiz_25C': 'sum',
+            'P_Fixed_25C': 'sum',
+            'P_Fixed_EW_25C': 'sum',
+            'P_Fixed_NS_25C': 'sum',
+            'P_1Axis_Az_25C': 'sum',
+            'P_1Axis_Polar_25C': 'sum',
+            'P_1Axis_Horiz_25C': 'sum',
+            'P_1Axis_El_25C': 'sum',
+            'P_2Axis_25C': 'sum'
+            }).reset_index()
+            
+            # Apply 14-day rolling average to smooth temperature curves for realistic visualization
+            # This eliminates day-to-day variations and artifacts while preserving seasonal trends
+            temp_cols = ['T_amb', 'T_cell_Horiz', 'T_cell_Fixed', 'T_cell_Fixed_EW', 'T_cell_Fixed_NS',
+                        'T_cell_1Axis_Az', 'T_cell_1Axis_Polar', 'T_cell_1Axis_Horiz', 
+                        'T_cell_1Axis_El', 'T_cell_2Axis']
+            
+            for col in temp_cols:
+                if col in df_daily.columns:
+                    # Use 14-day centered rolling window for strong smoothing
+                    df_daily[col] = df_daily[col].rolling(window=14, center=True, min_periods=1).mean()
+            
+            # Convert daily power from W/m² to kWh/m² (sum of hourly W/m² = Wh/m², then /1000)
+            power_cols = [col for col in df_daily.columns if col.startswith('P_')]
+            for col in power_cols:
+                df_daily[col] = df_daily[col] / 1000  # Wh/m² to kWh/m²
+        
+        
+        # Mapping of modes to columns (name, T_cell, P_out, P_at_25C)
+        mode_mapping = [
+            ('Horizontal', 'T_cell_Horiz', 'P_Horiz', 'P_Horiz_25C'),
+            ('Fixed Tilt', 'T_cell_Fixed', 'P_Fixed', 'P_Fixed_25C'),
+            ('Fixed E-W', 'T_cell_Fixed_EW', 'P_Fixed_EW', 'P_Fixed_EW_25C'),
+            ('Fixed N-S', 'T_cell_Fixed_NS', 'P_Fixed_NS', 'P_Fixed_NS_25C'),
+            ('1-Axis Azimuth', 'T_cell_1Axis_Az', 'P_1Axis_Az', 'P_1Axis_Az_25C'),
+            ('1-Axis Polar', 'T_cell_1Axis_Polar', 'P_1Axis_Polar', 'P_1Axis_Polar_25C'),
+            ('1-Axis Horizontal', 'T_cell_1Axis_Horiz', 'P_1Axis_Horiz', 'P_1Axis_Horiz_25C'),
+            ('1-Axis Elevation', 'T_cell_1Axis_El', 'P_1Axis_El', 'P_1Axis_El_25C'),
+            ('2-Axis', 'T_cell_2Axis', 'P_2Axis', 'P_2Axis_25C')
+        ]
+        
+        # Create tabs for each orientation
+        tabs = st.tabs([name for name, _, _, _ in mode_mapping])
+        
+        for idx, (mode_name, t_cell_col, power_col, power_25c_col) in enumerate(mode_mapping):
+            with tabs[idx]:
+                # Skip if Fixed Tilt data not available
+                if mode_name == 'Fixed Tilt' and t_cell_col not in df_daily.columns:
+                    st.info("Run simulation with custom tilt/azimuth to see Fixed Tilt trends.")
+                    continue
+                
+                # Create dual-axis figure
+                fig = go.Figure()
+                
+                # Add ambient temperature trace (left y-axis)
+                fig.add_trace(go.Scatter(
+                    x=df_daily['Day'],
+                    y=df_daily['T_amb'],
+                    name='Ambient Temp',
+                    line=dict(color='#95a5a6', width=2, dash='dot'),
+                    yaxis='y1'
+                ))
+                
+                # Add cell temperature trace (left y-axis)
+                fig.add_trace(go.Scatter(
+                    x=df_daily['Day'],
+                    y=df_daily[t_cell_col],
+                    name='Cell Temp',
+                    line=dict(color='#e74c3c', width=2),
+                    yaxis='y1'
+                ))
+                
+                # Add power generation trace (right y-axis)
+                fig.add_trace(go.Scatter(
+                    x=df_daily['Day'],
+                    y=df_daily[power_col],
+                    name='Daily Energy (Actual)',
+                    line=dict(color='#2ecc71', width=3),
+                    yaxis='y2',
+                    fill='tozeroy',
+                    fillcolor='rgba(46, 204, 113, 0.1)'
+                ))
+                
+                # Add cooled power generation trace (right y-axis) - shows benefit of cooling
+                fig.add_trace(go.Scatter(
+                    x=df_daily['Day'],
+                    y=df_daily[power_25c_col],
+                    name='Daily Energy (if Cooled to 25°C)',
+                    line=dict(color='#3498db', width=2, dash='dash'),
+                    yaxis='y2'
+                ))
+                
+                # Add seasonal markers
+                for day, season_name in season_lines:
+                    fig.add_vline(
+                        x=day,
+                        line=dict(color='rgba(128, 128, 128, 0.3)', width=1, dash='dash'),
+                        annotation_text=season_name,
+                        annotation_position="top"
+                    )
+                
+                # Update layout with dual y-axes
+                fig.update_layout(
+                    title=f"{mode_name} - Annual Trends",
+                    xaxis=dict(title="Day of Year", range=[1, 365]),
+                    yaxis=dict(
+                        title=dict(
+                            text="Temperature (°C)",
+                            font=dict(color="#3498db")
+                        ),
+                        tickfont=dict(color="#3498db"),
+                        range=[-10, 80]
+                    ),
+                    yaxis2=dict(
+                        title=dict(
+                            text="Energy Generation (kWh/m²/day)",
+                            font=dict(color="#2ecc71")
+                        ),
+                        tickfont=dict(color="#2ecc71"),
+                        overlaying='y',
+                        side='right',
+                        range=[0, 2]
+                    ),
+                    hovermode='x unified',
+                    legend=dict(
+                        orientation="h",
+                        yanchor="bottom",
+                        y=1.08,
+                        xanchor="right",
+                        x=1
+                    ),
+                    height=500
+                )
+                
+                st.plotly_chart(fig, use_container_width=True)
+
+        st.markdown("---")
+
         # --- Section 5: Hourly Data ---
         with st.expander("📋 View Hourly Data"):
-            st.dataframe(df)
+            st.dataframe(df_hourly)
             
         # Download Button
-        csv = df.to_csv(index=False).encode('utf-8')
+        csv = df_hourly.to_csv(index=False).encode('utf-8')
         st.download_button(
             label="Download Hourly Data as CSV",
             data=csv,
