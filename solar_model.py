@@ -106,6 +106,7 @@ class SolarModel:
         
         # 2. Equation of Time (E) [Eq 4, 4.1]
         # B should be in radians for use in trig functions
+        # Uses 364 per Masters (2013) - empirical fit for equation of time
         B_rad = 2 * np.pi / 364 * (n - 81)
         E_min = 9.87 * np.sin(2*B_rad) - 7.53 * np.cos(B_rad) - 1.5 * np.sin(B_rad)
         
@@ -505,8 +506,11 @@ class SolarModel:
                 # Calculate geometry
                 geom = self.calculate_geometry(day, hour)
                 
-                # Skip if sun is below horizon (Night time)
-                if geom['elevation'] <= 0:
+                # Check current hour and next hour to see if this is a transitional hour
+                # Include if sun is up at start OR sun is up at end (transitional)
+                geom_next = self.calculate_geometry(day, hour + 1)
+                
+                if geom['elevation'] <= 0 and geom_next['elevation'] <= 0:
                     continue
                 
                 daylight_hours_count += 1
@@ -535,13 +539,36 @@ class SolarModel:
                 res_1axis_az = self.calculate_pv_performance(Ic_1axis_az, cos_theta_1axis_az, T_amb=T_amb, efficiency=efficiency)
                 
                 # --- Mode 3: 1-Axis Elevation Tracking ---
-                # Tracker rotates on E-W axis, tilting N-S.
-                # It should face the sun's azimuth (North or South).
-                if abs(phi_s) <= 90:
-                    phi_c_el_track = 0 # Face North
+                # Tracker rotates on E-W axis, tilting N-S to track elevation.
+                
+                delta = geom['declination']
+                
+                # Determine panel orientation based on latitude and declination
+                if abs(self.latitude) >= 23.45:
+                    # Outside tropics: Always face equator
+                    phi_c_el_track = 0 if self.latitude < 0 else 180
+                elif abs(self.latitude) < 0.1:
+                    # At or very near equator: Always face North to avoid equinox flips
+                    # (Sun passes overhead at equinoxes, orientation doesn't matter much)
+                    phi_c_el_track = 0
                 else:
-                    phi_c_el_track = 180 # Face South
+                    # Inside tropics (but not at equator): Determine from declination
+                    if self.latitude < 0:
+                        # Southern Hemisphere
+                        if delta > 0 and abs(delta) > abs(self.latitude):
+                            phi_c_el_track = 0  # Sun in Northern sky → Face North
+                        else:
+                            phi_c_el_track = 180  # Sun in Southern sky → Face South
+                    else:
+                        # Northern Hemisphere
+                        if delta < 0 and abs(delta) > abs(self.latitude):
+                            phi_c_el_track = 180  # Sun in Southern sky → Face South
+                        else:
+                            phi_c_el_track = 0  # Sun in Northern sky → Face North
+                
+                # Panel tilt tracks the complement of elevation angle
                 sigma_el_track = 90 - beta
+                
                 Ic_1axis_el, cos_theta_1axis_el = self.calculate_incident_irradiance(beta, phi_s, sigma_el_track, phi_c_el_track, Ib, C)
                 res_1axis_el = self.calculate_pv_performance(Ic_1axis_el, cos_theta_1axis_el, T_amb=T_amb, efficiency=efficiency)
                 

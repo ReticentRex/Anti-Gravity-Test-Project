@@ -522,7 +522,19 @@ elif st.session_state['user_mode'] == 'Advanced':
         optimize_electrical = st.session_state.get('optimize_electrical', False)
         df_hourly = st.session_state.get('df_hourly')
         
-        # Define Metric Columns
+        # Define Metric Columns with detailed tooltips
+        tracker_tooltips = {
+            'Horizontal': 'Panel lies flat on the ground (0° tilt). Simple but inefficient.',
+            'Fixed Tilt': f'Panel fixed at {fixed_tilt}° tilt, {fixed_azimuth}° azimuth. No moving parts.',
+            'Fixed E-W': 'Two panels at 45° tilt facing East (90°) and West (270°). Averages morning/evening production.',
+            'Fixed N-S': 'Two panels at 45° tilt facing North (0°) and South (180°). Captures different sun paths.',
+            '1-Axis Azimuth': 'Rotates East-West on a tilted axis to follow the sun\'s daily path. Panel tilt is optimized.',
+            '1-Axis Polar': 'Axis tilted at latitude angle, aligned with Earth\'s rotation axis. Rotates by hour angle (15°/hour) to track the sun\'s East-West motion. Does NOT adjust for seasonal elevation changes.',
+            '1-Axis Horizontal': 'Horizontal North-South axis. Rotates East-West like Polar but without seasonal tilt advantage.',
+            '1-Axis Elevation': 'Rotates on horizontal East-West axis to track sun elevation by tilting North-South. Panel orientation (N or S) is determined by seasonal declination, not instantaneous azimuth. Most beneficial at equatorial latitudes where sun crosses between hemispheres throughout the year.',
+            '2-Axis': 'Fully articulating tracker. Adjusts both azimuth and elevation to point directly at the sun at all times.'
+        }
+        
         metric_cols = [
             ('Horizontal', 'Annual_Yield_Horizontal_kWh_m2', 'Flat on the ground'),
             ('Fixed Tilt', 'Annual_Yield_Fixed_kWh_m2', f'Fixed at {fixed_tilt}° tilt, {fixed_azimuth}° azimuth'),
@@ -654,20 +666,88 @@ elif st.session_state['user_mode'] == 'Advanced':
                         }
                         
                         img_html = ""
+                        img_path_for_modal = ""
+                        img_id = label.replace(" ", "_").replace("-", "_")
                         if label in image_files:
                             img_path = base_path + image_files[label]
+                            img_path_for_modal = img_path
                             try:
                                 with open(img_path, "rb") as f:
                                     img_data = base64.b64encode(f.read()).decode()
-                                # Image with tight frame
-                                img_html = f'<div style="border: 1px solid rgba(128, 128, 128, 0.25); border-radius: 8px; padding: 8px; background-color: rgba(255, 255, 255, 0.03); display: inline-block;"><img src="data:image/png;base64,{img_data}" style="height: 120px; width: auto; display: block;"></div>'
+                                # Image with hover effect
+                                img_html = f'''<style>
+.tracker-img-{img_id} {{
+    transition: all 0.3s ease;
+    cursor: pointer;
+}}
+.tracker-img-{img_id}:hover {{
+    transform: scale(1.05);
+    filter: brightness(1.1);
+}}
+</style>
+<div style="border: 1px solid rgba(128, 128, 128, 0.25); border-radius: 8px; padding: 8px; background-color: rgba(255, 255, 255, 0.03); display: inline-block;">
+    <img src="data:image/png;base64,{img_data}" class="tracker-img-{img_id}" style="height: 120px; width: auto; display: block;" title="Click expander below to view full size">
+</div>'''
                             except Exception:
                                 img_html = '<div style="height: 120px; width: 120px; display: flex; align-items: center; justify-content: center; color: #ccc; border: 1px solid rgba(128, 128, 128, 0.25); border-radius: 8px;">No Image</div>'
 
+                        # Get tooltip
+                        tooltip = tracker_tooltips.get(label, '').replace('"', '&quot;')
+                        
+                        # Help icon matching Streamlit's native style with improved tooltip
+                        help_icon_svg = '''<svg stroke="currentColor" fill="currentColor" stroke-width="0" viewBox="0 0 512 512" height="1em" width="1em" xmlns="http://www.w3.org/2000/svg"><path d="M504 256c0 136.997-111.043 248-248 248S8 392.997 8 256C8 119.083 119.043 8 256 8s248 111.083 248 248zM262.655 90c-54.497 0-89.255 22.957-116.549 63.758-3.536 5.286-2.353 12.415 2.715 16.258l34.699 26.31c5.205 3.947 12.621 3.008 16.665-2.122 17.864-22.658 30.113-35.797 57.303-35.797 20.429 0 45.698 13.148 45.698 32.958 0 14.976-12.363 22.667-32.534 33.976C247.128 238.528 216 254.941 216 296v4c0 6.627 5.373 12 12 12h56c6.627 0 12-5.373 12-12v-1.333c0-28.462 83.186-29.647 83.186-106.667 0-58.002-60.165-102-116.531-102zM256 338c-25.365 0-46 20.635-46 46 0 25.364 20.635 46 46 46s46-20.636 46-46c0-25.365-20.635-46-46-46z"></path></svg>'''
+                        
+                        # Streamlit-style tooltip CSS
+                        tooltip_css = f'''<style>
+.help-tooltip-{img_id} {{
+    position: relative;
+    display: inline-block;
+}}
+.help-tooltip-{img_id} .tooltiptext {{
+    visibility: hidden;
+    width: 300px;
+    background-color: #262730;
+    color: #fafafa;
+    text-align: left;
+    border-radius: 6px;
+    padding: 12px;
+    position: absolute;
+    z-index: 1000;
+    bottom: 125%;
+    left: 50%;
+    margin-left: -150px;
+    opacity: 0;
+    transition: opacity 0.3s;
+    font-size: 14px;
+    line-height: 1.6;
+    box-shadow: 0px 4px 12px rgba(0, 0, 0, 0.4);
+}}
+.help-tooltip-{img_id} .tooltiptext::after {{
+    content: "";
+    position: absolute;
+    top: 100%;
+    left: 50%;
+    margin-left: -5px;
+    border-width: 5px;
+    border-style: solid;
+    border-color: #262730 transparent transparent transparent;
+}}
+.help-tooltip-{img_id}:hover .tooltiptext {{
+    visibility: visible;
+    opacity: 1;
+}}
+</style>'''
+                        
                         # Render Card with Side-by-Side Layout
-                        st.markdown(f"""
-<div style="border: 1px solid rgba(128, 128, 128, 0.15); border-radius: 12px; padding: 16px; margin-bottom: 16px; background-color: rgba(255, 255, 255, 0.02);">
-<div style="text-align: center; font-size: 1rem; font-weight: 600; color: #b0b0b0; margin-bottom: 12px;">{label}</div>
+                        st.markdown(f"""{tooltip_css}
+<div style="border: 1px solid rgba(128, 128, 128, 0.15); border-radius: 12px; padding: 16px; margin-bottom: 6px; background-color: rgba(255, 255, 255, 0.02);">
+<div style="text-align: center; font-size: 1rem; font-weight: 600; color: #b0b0b0; margin-bottom: 12px;">
+    {label}
+    <span class="help-tooltip-{img_id}" style="display: inline-block; margin-left: 4px; vertical-align: middle; color: rgba(49, 51, 63, 0.6); cursor: help;">
+        {help_icon_svg}
+        <span class="tooltiptext">{tooltip}</span>
+    </span>
+</div>
 <div style="display: flex; align-items: center; justify-content: space-between; gap: 20px;">
 <div style="flex: 1; text-align: left; display: flex; flex-direction: column; gap: 3px;">
 <div style="font-size: 1.3rem; font-weight: 700;">{val:,.0f} <span style="font-size: 0.85rem; color: #b0b0b0; font-weight: 400;">kWh/m²</span></div>
@@ -682,6 +762,11 @@ elif st.session_state['user_mode'] == 'Advanced':
 </div>
 </div>
 """, unsafe_allow_html=True)
+                        
+                        # Add integrated expander for full-size image viewing
+                        if img_path_for_modal and label in image_files:
+                            with st.expander("🔍 Click to view full schematic", expanded=False):
+                                st.image(img_path_for_modal, caption=f"{label}", use_container_width=True)
 
         st.info(f"""
         **Daylight Capacity Factor** reveals the system's efficiency specifically during sun-up hours. 
@@ -1177,50 +1262,83 @@ elif st.session_state['user_mode'] == 'Advanced':
         # Note: The DataFrame df_hourly only contains rows for daylight hours (where elevation > 0).
         # Therefore, these averages are strictly over the daylight period, as requested.
         if df_hourly is not None:
-            df_daily = df_hourly.groupby('Day').agg({
-            'T_amb': 'mean',
-            'T_cell_Horiz': 'mean',
-            'T_cell_Fixed': 'mean',
-            'T_cell_Fixed_EW': 'mean',
-            'T_cell_Fixed_NS': 'mean',
-            'T_cell_1Axis_Az': 'mean',
-            'T_cell_1Axis_Polar': 'mean',
-            'T_cell_1Axis_Horiz': 'mean',
-            'T_cell_1Axis_El': 'mean',
-            'T_cell_2Axis': 'mean',
-            'P_Horiz': 'sum',
-            'P_Fixed': 'sum',
-            'P_Fixed_EW': 'sum',
-            'P_Fixed_NS': 'sum',
-            'P_1Axis_Az': 'sum',
-            'P_1Axis_Polar': 'sum',
-            'P_1Axis_Horiz': 'sum',
-            'P_1Axis_El': 'sum',
-            'P_2Axis': 'sum',
-            'P_Horiz_25C': 'sum',
-            'P_Fixed_25C': 'sum',
-            'P_Fixed_EW_25C': 'sum',
-            'P_Fixed_NS_25C': 'sum',
-            'P_1Axis_Az_25C': 'sum',
-            'P_1Axis_Polar_25C': 'sum',
-            'P_1Axis_Horiz_25C': 'sum',
-            'P_1Axis_El_25C': 'sum',
-            'P_2Axis_25C': 'sum'
-            }).reset_index()
+            # Calculate Weighted Components for Smooth Averages
+            # T_weighted = Sum(T * P) / Sum(P)
+            # This eliminates "sawtooth" artifacts caused by discrete inclusion/exclusion of sunrise/sunset hours
             
-            # Apply 14-day rolling average to smooth temperature curves for realistic visualization
-            # This eliminates day-to-day variations and artifacts while preserving seasonal trends
-            temp_cols = ['T_amb', 'T_cell_Horiz', 'T_cell_Fixed', 'T_cell_Fixed_EW', 'T_cell_Fixed_NS',
-                        'T_cell_1Axis_Az', 'T_cell_1Axis_Polar', 'T_cell_1Axis_Horiz', 
-                        'T_cell_1Axis_El', 'T_cell_2Axis']
+            # 1. Create Weighted Columns
+            # Weight Ambient Temp by Fixed Power (proxy for general solar availability)
+            # This ensures T_amb is calculated over the same "effective" daylight window as cell temps
+            if 'T_amb' in df_hourly.columns and 'P_Fixed' in df_hourly.columns:
+                df_hourly['TxP_T_amb'] = df_hourly['T_amb'] * df_hourly['P_Fixed']
+
+            temp_power_pairs = [
+                ('T_cell_Horiz', 'P_Horiz'),
+                ('T_cell_Fixed', 'P_Fixed'),
+                ('T_cell_Fixed_EW', 'P_Fixed_EW'),
+                ('T_cell_Fixed_NS', 'P_Fixed_NS'),
+                ('T_cell_1Axis_Az', 'P_1Axis_Az'),
+                ('T_cell_1Axis_Polar', 'P_1Axis_Polar'),
+                ('T_cell_1Axis_Horiz', 'P_1Axis_Horiz'),
+                ('T_cell_1Axis_El', 'P_1Axis_El'),
+                ('T_cell_2Axis', 'P_2Axis')
+            ]
             
-            for col in temp_cols:
-                if col in df_daily.columns:
-                    # Use 14-day centered rolling window for strong smoothing
-                    df_daily[col] = df_daily[col].rolling(window=14, center=True, min_periods=1).mean()
+            for t_col, p_col in temp_power_pairs:
+                if t_col in df_hourly.columns and p_col in df_hourly.columns:
+                    df_hourly[f'TxP_{t_col}'] = df_hourly[t_col] * df_hourly[p_col]
+
+            # 2. Aggregate Sums
+            agg_dict = {
+                'TxP_T_amb': 'sum', # Weighted Ambient Sum
+                'P_Horiz': 'sum',
+                'P_Fixed': 'sum',
+                'P_Fixed_EW': 'sum',
+                'P_Fixed_NS': 'sum',
+                'P_1Axis_Az': 'sum',
+                'P_1Axis_Polar': 'sum',
+                'P_1Axis_Horiz': 'sum',
+                'P_1Axis_El': 'sum',
+                'P_2Axis': 'sum',
+                'P_Horiz_25C': 'sum',
+                'P_Fixed_25C': 'sum',
+                'P_Fixed_EW_25C': 'sum',
+                'P_Fixed_NS_25C': 'sum',
+                'P_1Axis_Az_25C': 'sum',
+                'P_1Axis_Polar_25C': 'sum',
+                'P_1Axis_Horiz_25C': 'sum',
+                'P_1Axis_El_25C': 'sum',
+                'P_2Axis_25C': 'sum'
+            }
+            
+            # Add TxP columns to aggregation
+            for t_col, _ in temp_power_pairs:
+                if f'TxP_{t_col}' in df_hourly.columns:
+                    agg_dict[f'TxP_{t_col}'] = 'sum'
+
+            df_daily = df_hourly.groupby('Day').agg(agg_dict).reset_index()
+            
+            # 3. Calculate Weighted Averages
+            
+            # Ambient (Weighted by Fixed Power)
+            df_daily['T_amb'] = df_daily.apply(
+                lambda row: row['TxP_T_amb'] / row['P_Fixed'] if row['P_Fixed'] > 0 else 0, 
+                axis=1
+            )
+
+            for t_col, p_col in temp_power_pairs:
+                if f'TxP_{t_col}' in df_daily.columns:
+                    # Avoid division by zero
+                    df_daily[t_col] = df_daily.apply(
+                        lambda row: row[f'TxP_{t_col}'] / row[p_col] if row[p_col] > 0 else 0, 
+                        axis=1
+                    )
+            
+            # Note: Removed 14-day rolling average smoothing. 
+            # The weighted average method is robust enough to produce smooth curves without artificial smoothing.
             
             # Convert daily power from W/m² to kWh/m² (sum of hourly W/m² = Wh/m², then /1000)
-            power_cols = [col for col in df_daily.columns if col.startswith('P_')]
+            power_cols = [col for col in df_daily.columns if col.startswith('P_') and not col.startswith('TxP_')]
             for col in power_cols:
                 df_daily[col] = df_daily[col] / 1000  # Wh/m² to kWh/m²
         
@@ -1265,7 +1383,7 @@ elif st.session_state['user_mode'] == 'Advanced':
                     x=df_daily['Day'],
                     y=df_daily[t_cell_col],
                     name='Cell Temp',
-                    line=dict(color='#e74c3c', width=2),
+                    line=dict(color='#e74c3c', width=2, dash='dot'),
                     yaxis='y1'
                 ))
                 
@@ -1285,7 +1403,7 @@ elif st.session_state['user_mode'] == 'Advanced':
                     x=df_daily['Day'],
                     y=df_daily[power_25c_col],
                     name='Daily Energy (if Cooled to 25°C)',
-                    line=dict(color='#3498db', width=2, dash='dash'),
+                    line=dict(color='#3498db', width=2),
                     yaxis='y2'
                 ))
                 
@@ -1333,9 +1451,169 @@ elif st.session_state['user_mode'] == 'Advanced':
                 
                 st.plotly_chart(fig, use_container_width=True)
 
+
+        st.markdown("---")
+        
+        # --- Section 5: Interactive Hourly Day View ---
+        st.header("⏱️ Hourly Performance for Selected Day")
+        st.markdown("Use the slider to explore **hourly generation, temperatures, and cooling benefit** for any day of the year.")
+        
+        # Slider for day selection (default to summer solstice for demonstration)
+        if latitude < 0:
+            default_day = 355  # Southern Hemisphere summer (Dec 21)
+            solstice_label = "Summer Solstice"
+        else:
+            default_day = 172  # Northern Hemisphere summer (Jun 21)
+            solstice_label = "Summer Solstice"
+        
+        selected_day = st.slider(
+            "Select Day of Year",
+            min_value=1,
+            max_value=365,
+            value=default_day,
+            help=f"Choose any day from 1 (Jan 1) to 365 (Dec 31). Default is {solstice_label} (Day {default_day})."
+        )
+        
+        # Show selected date info
+        import datetime
+        date_obj = datetime.datetime(2024, 1, 1) + datetime.timedelta(days=selected_day - 1)
+        date_str = date_obj.strftime("%B %d")
+        st.info(f"**Day {selected_day}** corresponds to **{date_str}** (in a non-leap year)")
+        
+        # Create tabs for each tracker type
+        hourly_tabs = st.tabs([name for name, _, _, _ in mode_mapping])
+        
+        for idx, (tab, (mode_name, t_cell_col, power_col, power_25c_col)) in enumerate(zip(hourly_tabs, mode_mapping)):
+            with tab:
+                # Filter hourly data for selected day
+                df_day = df_hourly[df_hourly['Day'] == selected_day].copy()
+                
+                if len(df_day) == 0:
+                    st.warning(f"No daylight hours on Day {selected_day} for this latitude. Sun does not rise.")
+                else:
+                    # Create figure with dual y-axes
+                    fig = go.Figure()
+                    
+                    # Add 2-Axis tracker as faded background reference (except on 2-Axis tab itself)
+                    if mode_name != '2-Axis':
+                        # Background: 2-Axis power (faded, solid)
+                        fig.add_trace(go.Scatter(
+                            x=df_day['Hour'],
+                            y=df_day['P_2Axis'] / 1000,
+                            name='2-Axis (Reference)',
+                            line=dict(color='#e74c3c', width=2),
+                            opacity=0.3,
+                            yaxis='y1'
+                        ))
+                        
+                        # Background: 2-Axis cooled power (faded, solid)
+                        fig.add_trace(go.Scatter(
+                            x=df_day['Hour'],
+                            y=df_day['P_2Axis_25C'] / 1000,
+                            name='2-Axis Cooled (Reference)',
+                            line=dict(color='#3498db', width=2),
+                            opacity=0.3,
+                            yaxis='y1'
+                        ))
+                        
+                        # Background: 2-Axis cell temp (faded, dotted)
+                        fig.add_trace(go.Scatter(
+                            x=df_day['Hour'],
+                            y=df_day['T_cell_2Axis'],
+                            name='2-Axis Cell Temp (Reference)',
+                            line=dict(color='#f39c12', width=1.5, dash='dot'),
+                            opacity=0.3,
+                            yaxis='y2'
+                        ))
+                    
+                    # Left y-axis: Power generation (kW/m²) - solid lines
+                    fig.add_trace(go.Scatter(
+                        x=df_day['Hour'],
+                        y=df_day[power_col] / 1000,  # W/m² to kW/m²
+                        name=f'{mode_name} Power',
+                        line=dict(color='#e74c3c', width=3),
+                        yaxis='y1'
+                    ))
+                    
+                    # Add cooled power (if at 25°C) - solid line
+                    fig.add_trace(go.Scatter(
+                        x=df_day['Hour'],
+                        y=df_day[power_25c_col] / 1000,  # W/m² to kW/m²
+                        name=f'{mode_name} Power (if Cooled to 25°C)',
+                        line=dict(color='#3498db', width=2),
+                        yaxis='y1'
+                    ))
+                    
+                    # Right y-axis: Temperatures (°C) - dotted lines
+                    fig.add_trace(go.Scatter(
+                        x=df_day['Hour'],
+                        y=df_day[t_cell_col],
+                        name='Cell Temperature',
+                        line=dict(color='#f39c12', width=2, dash='dot'),
+                        yaxis='y2'
+                    ))
+                    
+                    fig.add_trace(go.Scatter(
+                        x=df_day['Hour'],
+                        y=df_day['T_amb'],
+                        name='Ambient Temperature',
+                        line=dict(color='#95a5a6', width=2, dash='dot'),
+                        yaxis='y2'
+                    ))
+                    
+                    # Update layout with dual y-axes
+                    fig.update_layout(
+                        title=f"{mode_name} - Hourly Performance on Day {selected_day} ({date_str})",
+                        xaxis=dict(
+                            title="Hour of Day",
+                            gridcolor='rgba(128, 128, 128, 0.2)',
+                            range=[df_day['Hour'].min() - 0.5, df_day['Hour'].max() + 0.5]
+                        ),
+                        yaxis=dict(
+                            title=dict(text="Power Output (kW/m²)", font=dict(color='#e74c3c')),
+                            tickfont=dict(color='#e74c3c'),
+                            gridcolor='rgba(128, 128, 128, 0.2)'
+                        ),
+                        yaxis2=dict(
+                            title=dict(text="Temperature (°C)", font=dict(color='#f39c12')),
+                            tickfont=dict(color='#f39c12'),
+                            overlaying='y',
+                            side='right'
+                        ),
+                        hovermode='x unified',
+                        plot_bgcolor='rgba(0,0,0,0)',
+                        paper_bgcolor='rgba(0,0,0,0)',
+                        legend=dict(
+                            orientation="h",
+                            yanchor="bottom",
+                            y=1.02,
+                            xanchor="right",
+                            x=1
+                        ),
+                        height=450
+                    )
+                    
+                    st.plotly_chart(fig, use_container_width=True)
+                    
+                    # Show summary stats for this day
+                    col1, col2, col3, col4 = st.columns(4)
+                    with col1:
+                        daily_energy = df_day[power_col].sum() / 1000  # Wh to kWh
+                        st.metric("Daily Energy", f"{daily_energy:.2f} kWh/m²")
+                    with col2:
+                        daily_energy_25c = df_day[power_25c_col].sum() / 1000
+                        cooling_benefit = daily_energy_25c - daily_energy
+                        st.metric("Cooling Benefit", f"{cooling_benefit:.2f} kWh/m²", delta=f"{cooling_benefit/daily_energy*100:.1f}%")
+                    with col3:
+                        max_temp = df_day[t_cell_col].max()
+                        st.metric("Peak Cell Temp", f"{max_temp:.1f} °C")
+                    with col4:
+                        avg_temp = df_day[t_cell_col].mean()
+                        st.metric("Avg Cell Temp", f"{avg_temp:.1f} °C")
+
         st.markdown("---")
 
-        # --- Section 5: Hourly Data ---
+        # --- Section 6: Hourly Data ---
         with st.expander("📋 View Hourly Data"):
             st.dataframe(df_hourly)
             
