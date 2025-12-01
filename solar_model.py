@@ -43,23 +43,32 @@ class SolarModel:
         # Absolute latitude for temperature scaling
         abs_lat = abs(self.latitude)
         
-        # Annual average temperature (decreases with latitude)
-        # Equator: ~27°C, Mid-latitudes (30-40°): ~18°C, Polar (60°+): ~5°C
-        if abs_lat < 23.45:  # Tropical
+        # Annual average temperature (strongly decreases with latitude)
+        # More aggressive polar cooling than before
+        if abs_lat < 23.45:  # Tropical (0-23.45°)
+            # Equator: ~27°C, Tropic edges: ~24°C
             T_avg = 27 - 0.15 * abs_lat
-        elif abs_lat < 50:  # Temperate
+        elif abs_lat < 50:  # Temperate (23.45-50°)
+            # Smoothly transition: ~24°C at 23° to ~10°C at 50°
             T_avg = 30 - 0.4 * abs_lat
-        else:  # Polar
-            T_avg = 20 - 0.3 * abs_lat
+        elif abs_lat < 66.5:  # High-latitude temperate (50-66.5°)
+            # Transition to polar: ~10°C at 50° to ~-5°C at 66.5°
+            T_avg = 60 - 1.0 * abs_lat
+        else:  # Polar (66.5-90°)
+            # Arctic/Antarctic circle to poles
+            # 66.5°: ~-5°C, 80°: ~-25°C, 90°: ~-35°C
+            T_avg = 100 - 1.6 * abs_lat
         
-        # Seasonal amplitude (increases with latitude)
-        # Equator: ~2°C variation, Mid-latitudes: ~10°C, Polar: ~20°C
-        if abs_lat < 23.45:
-            delta_T_seasonal = 2 + 0.15 * abs_lat
-        elif abs_lat < 66.5:
-            delta_T_seasonal = 5 + 0.3 * abs_lat
-        else:
-            delta_T_seasonal = 20
+        # Seasonal amplitude (increases with latitude up to polar regions)
+        # Tropics: small variation, Polar: large variation
+        if abs_lat < 23.45:  # Tropical
+            delta_T_seasonal = 2 + 0.15 * abs_lat  # ~2-5°C
+        elif abs_lat < 66.5:  # Temperate
+            delta_T_seasonal = 5 + 0.3 * abs_lat  # ~5-25°C
+        else:  # Polar
+            # In polar regions, huge seasonal swings but cap at reasonable values
+            # 66.5°: ±25°C, 80°: ±30°C, 90°: ±35°C
+            delta_T_seasonal = 25 + 0.4 * (abs_lat - 66.5)  # ~25-35°C
         
         # Diurnal (daily) amplitude: ~8-12°C typically
         delta_T_diurnal = 10
@@ -222,13 +231,17 @@ class SolarModel:
         # 2. Optical Depth (k) [Eq 10]
         k = 0.174 + 0.035 * np.sin(2 * np.pi / 365 * (n - 100))
         
-        # 3. Air Mass (m) [Eq 11]
-        # Prevent division by zero for very low angles
-        sin_beta = np.sin(beta_rad)
-        if sin_beta < 0.01: # Approx 0.5 degrees
-             m = 1 / 0.01 # Cap air mass
+        # 3. Air Mass (m) [Eq 11 - Kasten-Young Formula]
+        # More accurate than simple 1/sin(β) at low sun angles
+        # Accounts for atmospheric curvature and refraction
+        # Reference: Kasten, F. and Young, A.T. (1989)
+        # "Revised optical air mass tables and approximation formula"
+        if elevation_deg < 0.5:
+            # Below 0.5°, use capped value (sunrise/sunset edge case)
+            m = 1 / 0.01
         else:
-            m = 1 / sin_beta
+            # Kasten-Young formula (elevation in degrees for the second term)
+            m = 1.0 / (np.sin(beta_rad) + 0.50572 * (elevation_deg + 6.07995)**(-1.6364))
             
         # 4. Direct Normal Irradiance (Ib) [Eq 12]
         # This is the beam component measured perpendicular to the sun's rays
@@ -356,9 +369,21 @@ class SolarModel:
         # Positive value means loss (produced less than at 25C)
         Loss_Thermal = P_ref_25C - P_out
         
+        # Smart Cooling Logic
+        # Only "cool" if T_cell > 25°C. Otherwise, panel is already below 25°C.
+        # Cooling a cold panel would require heating, which is nonsensical.
+        if T_cell > 25:
+            P_cooled = P_ref_25C  # Benefit from cooling to 25°C
+            Cooling_Benefit = P_ref_25C - P_out  # Positive value (gain from cooling)
+        else:
+            P_cooled = P_out  # Already cold, no cooling benefit
+            Cooling_Benefit = 0  # No benefit from cooling
+        
         return {
             'P_out': max(0, P_out),
-            'P_at_25C': max(0, P_ref_25C),  # Theoretical power if cooled to 25°C
+            'P_at_25C': max(0, P_ref_25C),  # Theoretical power if cooled to 25°C (kept for compatibility)
+            'P_cooled': max(0, P_cooled),   # Smart cooling: max(P_out, P_at_25C)
+            'Cooling_Benefit': Cooling_Benefit,  # Actual benefit from active cooling
             'Loss_Angular': max(0, Loss_Angular),
             'Loss_Thermal': Loss_Thermal,
             'T_cell': T_cell
@@ -454,17 +479,238 @@ class SolarModel:
                 
         return best_tilt, total_electrical_yield  # Return kWh/m2 electrical yield
 
-    def generate_annual_profile(self, efficiency=0.2, fixed_tilt=None, fixed_azimuth=None, optimal_tilt=None):
+    def calculate_optimal_tilt_1axis_azimuth(self, efficiency=0.2, optimize_electrical=False):
         """
-        Generate hourly solar profile for the entire year.
-        Calculates irradiance, PV Power, and Losses for 4 collector orientations.
-        Optionally calculates for a 5th "Fixed Custom" orientation.
+        Calculates optimal tilt for 1-Axis Azimuth Tracker specifically.
+        Fixed tilt, rotating azimuth following the sun.
+        
+        Args:
+            efficiency: PV module efficiency
+            optimize_electrical: If True, maximizes electrical yield. If False, maximizes irradiance.
+        
+        Returns: (optimal_tilt, max_yield_kwh_m2)
+        """
+        # Pre-calculate solar geometry
+        daylight_data = []
+        for day in range(1, 366):
+            for hour in range(24):
+                geom = self.calculate_geometry(day, hour)
+                if geom['elevation'] <= 0: continue
+                
+                irrad = self.calculate_irradiance(day, geom['elevation'])
+                T_amb = self.calculate_ambient_temperature(day, hour)
+                
+                daylight_data.append({
+                    'beta': geom['elevation'],
+                    'phi_s': geom['azimuth'],
+                    'Ib': irrad['dni'],
+                    'C': irrad['diffuse_factor'],
+                    'T_amb': T_amb
+                })
+        
+        best_tilt = 0
+        max_optimization_value = 0
+        
+        # Search range: Latitude +/- 5 degrees
+        lat_abs = abs(self.latitude)
+        start_tilt = max(0, int(lat_abs) - 5)
+        end_tilt = int(lat_abs) + 6
+        
+        for tilt in range(start_tilt, end_tilt):
+            total_value = 0
+            
+            for data in daylight_data:
+                # 1-Axis Azimuth: Fixed tilt, azimuth follows sun
+                phi_c = data['phi_s']  # Panel azimuth matches sun azimuth
+                
+                Ic, cos_theta = self.calculate_incident_irradiance(
+                    data['beta'], data['phi_s'],
+                    tilt, phi_c,
+                    data['Ib'], data['C']
+                )
+                
+                if optimize_electrical:
+                    pv_result = self.calculate_pv_performance(Ic, cos_theta, T_amb=data['T_amb'], efficiency=efficiency)
+                    total_value += (pv_result['P_out'] / 1000.0)
+                else:
+                    total_value += (Ic / 1000.0)
+            
+            if total_value > max_optimization_value:
+                max_optimization_value = total_value
+                best_tilt = tilt
+        
+        # Calculate electrical yield at optimal tilt
+        total_electrical_yield = 0
+        for data in daylight_data:
+            phi_c = data['phi_s']
+            Ic, cos_theta = self.calculate_incident_irradiance(
+                data['beta'], data['phi_s'],
+                best_tilt, phi_c,
+                data['Ib'], data['C']
+            )
+            pv_result = self.calculate_pv_performance(Ic, cos_theta, T_amb=data['T_amb'], efficiency=efficiency)
+            total_electrical_yield += (pv_result['P_out'] / 1000.0)
+        
+        return best_tilt, total_electrical_yield
+    
+    def calculate_optimal_tilt_1axis_polar(self, efficiency=0.2, optimize_electrical=False):
+        """
+        Calculates optimal axis tilt for 1-Axis Polar Tracker.
+        Axis tilted at this angle, panel rotates around it following hour angle.
+        
+        Note: For polar trackers, the "tilt" is the axis tilt angle (typically = latitude).
+        This function searches for the best axis tilt.
+        
+        Args:
+            efficiency: PV module efficiency
+            optimize_electrical: If True, maximizes electrical yield. If False, maximizes irradiance.
+        
+        Returns: (optimal_axis_tilt, max_yield_kwh_m2)
+        """
+        # Pre-calculate solar geometry
+        daylight_data = []
+        for day in range(1, 366):
+            for hour in range(24):
+                geom = self.calculate_geometry(day, hour)
+                if geom['elevation'] <= 0: continue
+                
+                irrad = self.calculate_irradiance(day, geom['elevation'])
+                T_amb = self.calculate_ambient_temperature(day, hour)
+                
+                daylight_data.append({
+                    'day': day,
+                    'hour': hour,
+                    'H_deg': geom['hour_angle'],
+                    'beta': geom['elevation'],
+                    'phi_s': geom['azimuth'],
+                    'Ib': irrad['dni'],
+                    'C': irrad['diffuse_factor'],
+                    'T_amb': T_amb
+                })
+        
+        best_axis_tilt = 0
+        max_optimization_value = 0
+        
+        # Search range: Latitude +/- 5 degrees
+        lat_abs = abs(self.latitude)
+        start_tilt = max(0, int(lat_abs) - 5)
+        end_tilt = int(lat_abs) + 6
+        
+        for axis_tilt in range(start_tilt, end_tilt):
+            total_value = 0
+            
+            # Axis azimuth (points to pole)
+            axis_azimuth = 180 if self.latitude < 0 else 0
+            panel_azimuth_noon = 0 if self.latitude < 0 else 180
+            
+            for data in daylight_data:
+                # Simulate polar tracker panel orientation
+                import numpy as np
+                
+                # Calculate panel orientation using rotation around polar axis
+                az_rad = np.radians(axis_azimuth)
+                tilt_rad = np.radians(axis_tilt)
+                
+                k_x = np.cos(tilt_rad) * np.sin(az_rad)
+                k_y = np.cos(tilt_rad) * np.cos(az_rad)
+                k_z = np.sin(tilt_rad)
+                
+                n0_az_rad = np.radians(panel_azimuth_noon)
+                n0_tilt_rad = np.pi/2 - tilt_rad
+                n0_x = np.cos(n0_tilt_rad) * np.sin(n0_az_rad)
+                n0_y = np.cos(n0_tilt_rad) * np.cos(n0_az_rad)
+                n0_z = np.sin(n0_tilt_rad)
+                
+                omega_rad = np.radians(data['H_deg'])
+                rho_rad = omega_rad if k_y >= 0 else -omega_rad
+                
+                v_cross_x = k_y * n0_z - k_z * n0_y
+                n_rot_x = v_cross_x * np.sin(rho_rad)
+                n_rot_y = n0_y * np.cos(rho_rad)
+                n_rot_z = n0_z * np.cos(rho_rad)
+                
+                if n_rot_z < 0:
+                    continue  # Panel facing down, skip
+                
+                n_rot_z = np.clip(n_rot_z, -1.0, 1.0)
+                sigma_polar = np.degrees(np.arccos(n_rot_z))
+                phi_c_polar = np.degrees(np.arctan2(n_rot_x, n_rot_y))
+                
+                Ic, cos_theta = self.calculate_incident_irradiance(
+                    data['beta'], data['phi_s'],
+                    sigma_polar, phi_c_polar,
+                    data['Ib'], data['C']
+                )
+                
+                if optimize_electrical:
+                    pv_result = self.calculate_pv_performance(Ic, cos_theta, T_amb=data['T_amb'], efficiency=efficiency)
+                    total_value += (pv_result['P_out'] / 1000.0)
+                else:
+                    total_value += (Ic / 1000.0)
+            
+            if total_value > max_optimization_value:
+                max_optimization_value = total_value
+                best_axis_tilt = axis_tilt
+        
+        # Calculate electrical yield at optimal axis tilt
+        total_electrical_yield = 0
+        axis_azimuth = 180 if self.latitude < 0 else 0
+        panel_azimuth_noon = 0 if self.latitude < 0 else 180
+        
+        for data in daylight_data:
+            import numpy as np
+            
+            az_rad = np.radians(axis_azimuth)
+            tilt_rad = np.radians(best_axis_tilt)
+            
+            k_x = np.cos(tilt_rad) * np.sin(az_rad)
+            k_y = np.cos(tilt_rad) * np.cos(az_rad)
+            k_z = np.sin(tilt_rad)
+            
+            n0_az_rad = np.radians(panel_azimuth_noon)
+            n0_tilt_rad = np.pi/2 - tilt_rad
+            n0_x = np.cos(n0_tilt_rad) * np.sin(n0_az_rad)
+            n0_y = np.cos(n0_tilt_rad) * np.cos(n0_az_rad)
+            n0_z = np.sin(n0_tilt_rad)
+            
+            omega_rad = np.radians(data['H_deg'])
+            rho_rad = omega_rad if k_y >= 0 else -omega_rad
+            
+            v_cross_x = k_y * n0_z - k_z * n0_y
+            n_rot_x = v_cross_x * np.sin(rho_rad)
+            n_rot_y = n0_y * np.cos(rho_rad)
+            n_rot_z = n0_z * np.cos(rho_rad)
+            
+            if n_rot_z < 0:
+                continue
+            
+            n_rot_z = np.clip(n_rot_z, -1.0, 1.0)
+            sigma_polar = np.degrees(np.arccos(n_rot_z))
+            phi_c_polar = np.degrees(np.arctan2(n_rot_x, n_rot_y))
+            
+            Ic, cos_theta = self.calculate_incident_irradiance(
+                data['beta'], data['phi_s'],
+                sigma_polar, phi_c_polar,
+                data['Ib'], data['C']
+            )
+            pv_result = self.calculate_pv_performance(Ic, cos_theta, T_amb=data['T_amb'], efficiency=efficiency)
+            total_electrical_yield += (pv_result['P_out'] / 1000.0)
+        
+        return best_axis_tilt, total_electrical_yield
+
+    def generate_annual_profile(self, efficiency=0.2, fixed_tilt=None, fixed_azimuth=None, optimal_tilt=None, optimize_electrical=False, time_step_minutes=60):
+        """
+        Generate solar profile for the entire year at specified time resolution.
+        Calculates irradiance, PV Power, and Losses for multiple collector orientations.
+        Optionally calculates for a "Fixed Custom" orientation.
         
         Args:
             fixed_tilt (float, optional): Tilt angle for custom fixed panel.
             fixed_azimuth (float, optional): Azimuth angle for custom fixed panel.
-            optimal_tilt (float, optional): Optimal tilt angle to use for 1-Axis trackers.
+            optimal_tilt (float, optional): General optimal tilt (used as flag/fallback).
             efficiency (float, optional): PV Module Efficiency (0.0 to 1.0). Default 0.14.
+            optimize_electrical (bool, optional): Whether to optimize for electrical yield.
+            time_step_minutes (int, optional): Time resolution in minutes (5, 30, or 60). Default 60.
             
         Returns:
             tuple: (pd.DataFrame, dict) -> (Hourly Data, Annual Totals)
@@ -476,11 +722,16 @@ class SolarModel:
         azimuth_fixed = fixed_azimuth if fixed_azimuth is not None else self.azimuth
         
         # Tilt for 1-Axis Trackers
-        # If optimal_tilt is provided, use it. Otherwise use defaults.
-        # Default for 1-Axis Azimuth was abs(latitude)
-        # Default for 1-Axis Polar was self.tilt (user input)
-        tilt_1axis_az = optimal_tilt if optimal_tilt is not None else abs(self.latitude)
-        tilt_1axis_polar = optimal_tilt if optimal_tilt is not None else tilt_fixed
+        # If optimal_tilt is provided, it implies the user wants optimized tilts.
+        # We calculate specific optimal tilts for each tracker type for best accuracy.
+        if optimal_tilt is not None:
+            # Calculate specific optimal tilts
+            tilt_1axis_az, _ = self.calculate_optimal_tilt_1axis_azimuth(efficiency, optimize_electrical)
+            tilt_1axis_polar, _ = self.calculate_optimal_tilt_1axis_polar(efficiency, optimize_electrical)
+        else:
+            # Use defaults
+            tilt_1axis_az = abs(self.latitude)
+            tilt_1axis_polar = tilt_fixed
 
         # Initialize Annual Totals
         annual_yield_horiz = 0
@@ -501,19 +752,23 @@ class SolarModel:
         
         daylight_hours_count = 0
         
+        # Calculate time step parameters
+        time_step_hours = time_step_minutes / 60.0
+        steps_per_day = int(24 * 60 / time_step_minutes)
+        
         for day in range(1, 366):
-            for hour in range(24):
-                # Calculate geometry
-                geom = self.calculate_geometry(day, hour)
+            for step in range(steps_per_day):
+                # Calculate fractional hour for this time step
+                hour_fractional = step * time_step_hours
                 
-                # Check current hour and next hour to see if this is a transitional hour
-                # Include if sun is up at start OR sun is up at end (transitional)
-                geom_next = self.calculate_geometry(day, hour + 1)
+                # Calculate geometry at this fractional hour
+                geom = self.calculate_geometry(day, hour_fractional)
                 
-                if geom['elevation'] <= 0 and geom_next['elevation'] <= 0:
+                # Check if sun is up (skip nighttime)
+                if geom['elevation'] <= 0:
                     continue
                 
-                daylight_hours_count += 1
+                daylight_hours_count += time_step_hours
                 
                 # Calculate base irradiance (DNI, Diffuse Factor)
                 irrad = self.calculate_irradiance(day, geom['elevation'])
@@ -525,7 +780,7 @@ class SolarModel:
                 C = irrad['diffuse_factor']
                 
                 # Calculate ambient temperature for this time step
-                T_amb = self.calculate_ambient_temperature(day, hour)
+                T_amb = self.calculate_ambient_temperature(day, hour_fractional)
                 
                 # --- Mode 1: Horizontal ---
                 Ic_horiz, cos_theta_horiz = self.calculate_incident_irradiance(beta, phi_s, 0, 0, Ib, C)
@@ -752,10 +1007,12 @@ class SolarModel:
                 
                 # 5. Rotation Angle rho_h
                 # Use same logic: if k points North, rho = omega.
+                # IMPORTANT: Add mechanical stop limits (±90°) to prevent panel from flipping upside down
+                # Real horizontal trackers cannot rotate more than 90° from vertical (edge-on position)
                 if k_y_h >= 0:
-                    rho_rad_h = omega_rad
+                    rho_rad_h = np.clip(omega_rad, -np.pi/2, np.pi/2)
                 else:
-                    rho_rad_h = -omega_rad
+                    rho_rad_h = np.clip(-omega_rad, -np.pi/2, np.pi/2)
                     
                 # Cross product v_cross_h = k_h x n0_h
                 v_cross_x_h = k_y_h * n0_z_h - k_z_h * n0_y_h
@@ -769,15 +1026,18 @@ class SolarModel:
                 n_rot_z_h = n0_z_h * np.cos(rho_rad_h)
                 
                 if n_rot_z_h < 0:
-                    beta_c_horiz = 0
+                    sigma_horiz = 0
                     phi_c_horiz = 0
                     cos_theta_horiz = 0
                     Ic_horiz_track = 0
                 else:
-                    beta_c_horiz = np.degrees(np.arcsin(n_rot_z_h))
+                    # Panel tilt from horizontal = 90° - elevation of normal
+                    # n_rot_z = sin(elevation), so elevation = arcsin(n_rot_z)
+                    # tilt from horizontal = 90° - elevation
+                    sigma_horiz = 90.0 - np.degrees(np.arcsin(np.clip(n_rot_z_h, -1, 1)))
                     phi_c_horiz = np.degrees(np.arctan2(n_rot_x_h, n_rot_y_h))
                     
-                    Ic_horiz_track, cos_theta_horiz = self.calculate_incident_irradiance(beta, phi_s, beta_c_horiz, phi_c_horiz, Ib, C)
+                    Ic_horiz_track, cos_theta_horiz = self.calculate_incident_irradiance(beta, phi_s, sigma_horiz, phi_c_horiz, Ib, C)
                     
                 res_horiz_track = self.calculate_pv_performance(Ic_horiz_track, cos_theta_horiz, T_amb=T_amb, efficiency=efficiency)
                 
@@ -830,7 +1090,8 @@ class SolarModel:
                 
                 row = {
                     'Day': day,
-                    'Hour': hour,
+                    'Hour': hour_fractional,
+                    'Time_Step_Hours': time_step_hours,  # Dynamic time step
                     'Declination_deg': geom['declination'],
                     'HourAngle_deg': geom['hour_angle'],
                     'Elevation_deg': geom['elevation'],
@@ -869,15 +1130,15 @@ class SolarModel:
                     'P_Fixed_EW': P_ew,
                     'P_Fixed_NS': P_ns,
                     
-                    # PV Power at 25°C (theoretical with active cooling)
-                    'P_Horiz_25C': res_horiz['P_at_25C'],
-                    'P_1Axis_Az_25C': res_1axis_az['P_at_25C'],
-                    'P_1Axis_Polar_25C': res_polar['P_at_25C'],
-                    'P_1Axis_Horiz_25C': res_horiz_track['P_at_25C'],
-                    'P_1Axis_El_25C': res_1axis_el['P_at_25C'],
-                    'P_2Axis_25C': res_2axis['P_at_25C'],
-                    'P_Fixed_EW_25C': (res_e['P_at_25C'] + res_w['P_at_25C']) / 2,
-                    'P_Fixed_NS_25C': (res_n['P_at_25C'] + res_s['P_at_25C']) / 2,
+                    # PV Power at 25°C (smart cooling - only when T_cell > 25°C)
+                    'P_Horiz_25C': res_horiz['P_cooled'],
+                    'P_1Axis_Az_25C': res_1axis_az['P_cooled'],
+                    'P_1Axis_Polar_25C': res_polar['P_cooled'],
+                    'P_1Axis_Horiz_25C': res_horiz_track['P_cooled'],
+                    'P_1Axis_El_25C': res_1axis_el['P_cooled'],
+                    'P_2Axis_25C': res_2axis['P_cooled'],
+                    'P_Fixed_EW_25C': (res_e['P_cooled'] + res_w['P_cooled']) / 2,
+                    'P_Fixed_NS_25C': (res_n['P_cooled'] + res_s['P_cooled']) / 2,
                     
                     # Angular Losses (Irradiance W/m2)
                     'Loss_Ang_Horiz_W_m2': res_horiz['Loss_Angular'],
@@ -915,86 +1176,73 @@ class SolarModel:
                 
         df = pd.DataFrame(data)
         
-        # Calculate Annual Totals (kWh/m2)
-        annual_2axis_yield = df['P_2Axis'].sum() / 1000
-        
+        # Calculate Annual Totals
         totals = {
-            'Annual_GHI_Total_kWh_m2': df['GHI_W_m2'].sum() / 1000,
-            'Annual_DNI_Total_kWh_m2': df['DNI_W_m2'].sum() / 1000,
+            # Irradiance Totals (kWh/m2)
+            'Annual_I_Horizontal_kWh_m2': (df['GHI_W_m2'].sum() * time_step_hours) / 1000,
+            'Annual_I_1Axis_Azimuth_kWh_m2': (df['I_1Axis_Azimuth_W_m2'].sum() * time_step_hours) / 1000,
+            'Annual_I_1Axis_Polar_kWh_m2': (df['I_1Axis_Polar_W_m2'].sum() * time_step_hours) / 1000,
+            'Annual_I_1Axis_Horizontal_kWh_m2': (df['I_1Axis_Horizontal_W_m2'].sum() * time_step_hours) / 1000,
+            'Annual_I_1Axis_Elevation_kWh_m2': (df['I_1Axis_Elevation_W_m2'].sum() * time_step_hours) / 1000,
+            'Annual_I_2Axis_kWh_m2': (df['I_2Axis_W_m2'].sum() * time_step_hours) / 1000,
+            'Annual_I_Fixed_EW_kWh_m2': (df['I_Fixed_EW_W_m2'].sum() * time_step_hours) / 1000,
+            'Annual_I_Fixed_NS_kWh_m2': (df['I_Fixed_NS_W_m2'].sum() * time_step_hours) / 1000,
             
-            # Irradiance Totals
-            'Annual_I_Horizontal_kWh_m2': df['I_Horizontal_W_m2'].sum() / 1000,
-            'Annual_I_1Axis_Azimuth_kWh_m2': df['I_1Axis_Azimuth_W_m2'].sum() / 1000,
-            'Annual_I_1Axis_Polar_kWh_m2': df['I_1Axis_Polar_W_m2'].sum() / 1000,
-            'Annual_I_1Axis_Horizontal_kWh_m2': df['I_1Axis_Horizontal_W_m2'].sum() / 1000,
-            'Annual_I_1Axis_Elevation_kWh_m2': df['I_1Axis_Elevation_W_m2'].sum() / 1000,
-            'Annual_I_2Axis_kWh_m2': df['I_2Axis_W_m2'].sum() / 1000,
-            'Annual_I_Fixed_EW_kWh_m2': df['I_Fixed_EW_W_m2'].sum() / 1000,
-            'Annual_I_Fixed_NS_kWh_m2': df['I_Fixed_NS_W_m2'].sum() / 1000,
-            
-            # Yield Totals
-            'Annual_Yield_Horizontal_kWh_m2': df['P_Horiz'].sum() / 1000,
-            'Annual_Yield_1Axis_Azimuth_kWh_m2': df['P_1Axis_Az'].sum() / 1000,
-            'Annual_Yield_1Axis_Polar_kWh_m2': df['P_1Axis_Polar'].sum() / 1000,
-            'Annual_Yield_1Axis_Horizontal_kWh_m2': df['P_1Axis_Horiz'].sum() / 1000,
-            'Annual_Yield_1Axis_Elevation_kWh_m2': df['P_1Axis_El'].sum() / 1000,
-            'Annual_Yield_2Axis_kWh_m2': annual_2axis_yield,
-            'Annual_Yield_Fixed_EW_kWh_m2': df['P_Fixed_EW'].sum() / 1000,
-            'Annual_Yield_Fixed_NS_kWh_m2': df['P_Fixed_NS'].sum() / 1000,
+            # Yield Totals (kWh/m2)
+            'Annual_Yield_Horizontal_kWh_m2': (df['P_Horiz'].sum() * time_step_hours) / 1000,
+            'Annual_Yield_1Axis_Azimuth_kWh_m2': (df['P_1Axis_Az'].sum() * time_step_hours) / 1000,
+            'Annual_Yield_1Axis_Polar_kWh_m2': (df['P_1Axis_Polar'].sum() * time_step_hours) / 1000,
+            'Annual_Yield_1Axis_Horizontal_kWh_m2': (df['P_1Axis_Horiz'].sum() * time_step_hours) / 1000,
+            'Annual_Yield_1Axis_Elevation_kWh_m2': (df['P_1Axis_El'].sum() * time_step_hours) / 1000,
+            'Annual_Yield_2Axis_kWh_m2': (df['P_2Axis'].sum() * time_step_hours) / 1000,
+            'Annual_Yield_Fixed_EW_kWh_m2': (df['P_Fixed_EW'].sum() * time_step_hours) / 1000,
+            'Annual_Yield_Fixed_NS_kWh_m2': (df['P_Fixed_NS'].sum() * time_step_hours) / 1000,
             
             # Cooled Yield Totals (at 25°C - theoretical with active cooling)
-            'Annual_Yield_Cooled_Horizontal_kWh_m2': df['P_Horiz_25C'].sum() / 1000,
-            'Annual_Yield_Cooled_1Axis_Azimuth_kWh_m2': df['P_1Axis_Az_25C'].sum() / 1000,
-            'Annual_Yield_Cooled_1Axis_Polar_kWh_m2': df['P_1Axis_Polar_25C'].sum() / 1000,
-            'Annual_Yield_Cooled_1Axis_Horizontal_kWh_m2': df['P_1Axis_Horiz_25C'].sum() / 1000,
-            'Annual_Yield_Cooled_1Axis_Elevation_kWh_m2': df['P_1Axis_El_25C'].sum() / 1000,
-            'Annual_Yield_Cooled_2Axis_kWh_m2': df['P_2Axis_25C'].sum() / 1000,
-            'Annual_Yield_Cooled_Fixed_EW_kWh_m2': df['P_Fixed_EW_25C'].sum() / 1000,
-            'Annual_Yield_Cooled_Fixed_NS_kWh_m2': df['P_Fixed_NS_25C'].sum() / 1000,
+            'Annual_Yield_Cooled_Horizontal_kWh_m2': (df['P_Horiz_25C'].sum() * time_step_hours) / 1000,
+            'Annual_Yield_Cooled_1Axis_Azimuth_kWh_m2': (df['P_1Axis_Az_25C'].sum() * time_step_hours) / 1000,
+            'Annual_Yield_Cooled_1Axis_Polar_kWh_m2': (df['P_1Axis_Polar_25C'].sum() * time_step_hours) / 1000,
+            'Annual_Yield_Cooled_1Axis_Horizontal_kWh_m2': (df['P_1Axis_Horiz_25C'].sum() * time_step_hours) / 1000,
+            'Annual_Yield_Cooled_1Axis_Elevation_kWh_m2': (df['P_1Axis_El_25C'].sum() * time_step_hours) / 1000,
+            'Annual_Yield_Cooled_2Axis_kWh_m2': (df['P_2Axis_25C'].sum() * time_step_hours) / 1000,
+            'Annual_Yield_Cooled_Fixed_EW_kWh_m2': (df['P_Fixed_EW_25C'].sum() * time_step_hours) / 1000,
+            'Annual_Yield_Cooled_Fixed_NS_kWh_m2': (df['P_Fixed_NS_25C'].sum() * time_step_hours) / 1000,
             
             # Annual Losses (Angular - Irradiance kWh/m2)
-            'Annual_Loss_Ang_Horiz_kWh_m2': df['Loss_Ang_Horiz_W_m2'].sum() / 1000,
-            'Annual_Loss_Ang_1Axis_Az_kWh_m2': df['Loss_Ang_1Axis_Az_W_m2'].sum() / 1000,
-            'Annual_Loss_Ang_1Axis_Polar_kWh_m2': df['Loss_Ang_1Axis_Polar_W_m2'].sum() / 1000,
-            'Annual_Loss_Ang_1Axis_Horizontal_kWh_m2': df['Loss_Ang_1Axis_Horizontal_W_m2'].sum() / 1000,
-            'Annual_Loss_Ang_1Axis_El_kWh_m2': df['Loss_Ang_1Axis_El_W_m2'].sum() / 1000,
-            'Annual_Loss_Ang_2Axis_kWh_m2': df['Loss_Ang_2Axis_W_m2'].sum() / 1000,
-            'Annual_Loss_Ang_Fixed_EW_kWh_m2': df['Loss_Ang_Fixed_EW_W_m2'].sum() / 1000,
-            'Annual_Loss_Ang_Fixed_NS_kWh_m2': df['Loss_Ang_Fixed_NS_W_m2'].sum() / 1000,
+            'Annual_Loss_Ang_Horiz_kWh_m2': (df['Loss_Ang_Horiz_W_m2'].sum() * time_step_hours) / 1000,
+            'Annual_Loss_Ang_1Axis_Az_kWh_m2': (df['Loss_Ang_1Axis_Az_W_m2'].sum() * time_step_hours) / 1000,
+            'Annual_Loss_Ang_1Axis_Polar_kWh_m2': (df['Loss_Ang_1Axis_Polar_W_m2'].sum() * time_step_hours) / 1000,
+            'Annual_Loss_Ang_1Axis_Horizontal_kWh_m2': (df['Loss_Ang_1Axis_Horizontal_W_m2'].sum() * time_step_hours) / 1000,
+            'Annual_Loss_Ang_1Axis_El_kWh_m2': (df['Loss_Ang_1Axis_El_W_m2'].sum() * time_step_hours) / 1000,
+            'Annual_Loss_Ang_2Axis_kWh_m2': (df['Loss_Ang_2Axis_W_m2'].sum() * time_step_hours) / 1000,
+            'Annual_Loss_Ang_Fixed_EW_kWh_m2': (df['Loss_Ang_Fixed_EW_W_m2'].sum() * time_step_hours) / 1000,
+            'Annual_Loss_Ang_Fixed_NS_kWh_m2': (df['Loss_Ang_Fixed_NS_W_m2'].sum() * time_step_hours) / 1000,
             
             # Annual Losses (Thermal - Power kWh/m2)
-            'Annual_Loss_Therm_Horiz_kWh_m2': df['Loss_Therm_Horiz_W_m2'].sum() / 1000,
-            'Annual_Loss_Therm_1Axis_Az_kWh_m2': df['Loss_Therm_1Axis_Az_W_m2'].sum() / 1000,
-            'Annual_Loss_Therm_1Axis_Polar_kWh_m2': df['Loss_Therm_1Axis_Polar_W_m2'].sum() / 1000,
-            'Annual_Loss_Therm_1Axis_Horizontal_kWh_m2': df['Loss_Therm_1Axis_Horizontal_W_m2'].sum() / 1000,
-            'Annual_Loss_Therm_1Axis_El_kWh_m2': df['Loss_Therm_1Axis_El_W_m2'].sum() / 1000,
-            'Annual_Loss_Therm_2Axis_kWh_m2': df['Loss_Therm_2Axis_W_m2'].sum() / 1000,
-            'Annual_Loss_Therm_Fixed_EW_kWh_m2': df['Loss_Therm_Fixed_EW_W_m2'].sum() / 1000,
-            'Annual_Loss_Therm_Fixed_NS_kWh_m2': df['Loss_Therm_Fixed_NS_W_m2'].sum() / 1000,
-            
-            # Performance Ratios
-            'Ratio_Yield_Horizontal_vs_2Axis_Percent': (df['P_Horiz'].sum() / 1000) / annual_2axis_yield * 100 if annual_2axis_yield > 0 else 0,
-            'Ratio_Yield_1Axis_Azimuth_vs_2Axis_Percent': (df['P_1Axis_Az'].sum() / 1000) / annual_2axis_yield * 100 if annual_2axis_yield > 0 else 0,
-            'Ratio_Yield_1Axis_Polar_vs_2Axis_Percent': (df['P_1Axis_Polar'].sum() / 1000) / annual_2axis_yield * 100 if annual_2axis_yield > 0 else 0,
-            'Ratio_Yield_1Axis_Elevation_vs_2Axis_Percent': (df['P_1Axis_El'].sum() / 1000) / annual_2axis_yield * 100 if annual_2axis_yield > 0 else 0,
-            'Ratio_Yield_Fixed_vs_2Axis_Percent': (df['P_Fixed'].sum() / 1000) / annual_2axis_yield * 100 if annual_2axis_yield > 0 else 0,
-            'Ratio_Yield_Fixed_EW_vs_2Axis_Percent': (df['P_Fixed_EW'].sum() / 1000) / annual_2axis_yield * 100 if annual_2axis_yield > 0 else 0,
-            'Ratio_Yield_Fixed_NS_vs_2Axis_Percent': (df['P_Fixed_NS'].sum() / 1000) / annual_2axis_yield * 100 if annual_2axis_yield > 0 else 0
+            'Annual_Loss_Therm_Horiz_kWh_m2': (df['Loss_Therm_Horiz_W_m2'].sum() * time_step_hours) / 1000,
+            'Annual_Loss_Therm_1Axis_Az_kWh_m2': (df['Loss_Therm_1Axis_Az_W_m2'].sum() * time_step_hours) / 1000,
+            'Annual_Loss_Therm_1Axis_Polar_kWh_m2': (df['Loss_Therm_1Axis_Polar_W_m2'].sum() * time_step_hours) / 1000,
+            'Annual_Loss_Therm_1Axis_Horizontal_kWh_m2': (df['Loss_Therm_1Axis_Horizontal_W_m2'].sum() * time_step_hours) / 1000,
+            'Annual_Loss_Therm_1Axis_El_kWh_m2': (df['Loss_Therm_1Axis_El_W_m2'].sum() * time_step_hours) / 1000,
+            'Annual_Loss_Therm_2Axis_kWh_m2': (df['Loss_Therm_2Axis_W_m2'].sum() * time_step_hours) / 1000,
+            'Annual_Loss_Therm_Fixed_EW_kWh_m2': (df['Loss_Therm_Fixed_EW_W_m2'].sum() * time_step_hours) / 1000,
+            'Annual_Loss_Therm_Fixed_NS_kWh_m2': (df['Loss_Therm_Fixed_NS_W_m2'].sum() * time_step_hours) / 1000,
         }
         
-        # Add Fixed Custom Totals if calculated
+        # Fixed Custom Totals (if calculated)
         if fixed_tilt is not None:
-            totals['Annual_I_Fixed_kWh_m2'] = df['I_Fixed_W_m2'].sum() / 1000
-            totals['Annual_Yield_Fixed_kWh_m2'] = df['P_Fixed'].sum() / 1000
-            totals['Annual_Loss_Ang_Fixed_kWh_m2'] = df['Loss_Ang_Fixed_W_m2'].sum() / 1000
-            totals['Annual_Loss_Therm_Fixed_kWh_m2'] = df['Loss_Therm_Fixed_W_m2'].sum() / 1000
-            totals['Ratio_Yield_Fixed_vs_2Axis_Percent'] = (df['P_Fixed'].sum() / 1000) / annual_2axis_yield * 100 if annual_2axis_yield > 0 else 0
-            totals['Annual_Yield_Cooled_Fixed_kWh_m2'] = df['P_Fixed_25C'].sum() / 1000
+             totals['Annual_I_Fixed_kWh_m2'] = (df['I_Fixed_W_m2'].sum() * time_step_hours) / 1000
+             totals['Annual_Yield_Fixed_kWh_m2'] = (df['P_Fixed'].sum() * time_step_hours) / 1000
+             totals['Annual_Yield_Cooled_Fixed_kWh_m2'] = (df['P_Fixed_25C'].sum() * time_step_hours) / 1000
+             totals['Annual_Loss_Ang_Fixed_kWh_m2'] = (df['Loss_Ang_Fixed_W_m2'].sum() * time_step_hours) / 1000
+             totals['Annual_Loss_Therm_Fixed_kWh_m2'] = (df['Loss_Therm_Fixed_W_m2'].sum() * time_step_hours) / 1000
+        else:
+             totals['Annual_Yield_Fixed_kWh_m2'] = 0
+             totals['Annual_Yield_Cooled_Fixed_kWh_m2'] = 0
         
-        # Capacity Factors
-        # Rated Power (kW/m2) = efficiency (since STC is 1 kW/m2)
-        rated_power_kw_m2 = efficiency
+        # Constants for CF Calculation
         total_hours = 8760
+        rated_power_kw_m2 = efficiency # Assuming 1 kW/m2 STC input
         
         def calc_cf(yield_val, hours):
             if hours > 0 and rated_power_kw_m2 > 0:

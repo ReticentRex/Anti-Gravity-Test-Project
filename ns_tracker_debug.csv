@@ -1,0 +1,10 @@
+Location,Latitude,Season,Declination,Sun_Elev_Noon,Sun_Az_Noon,North_Panel_Eff,South_Panel_Eff,Combined_Eff,Winner
+Perth (Mid-Lat),-32.05,Summer Solstice,-23.45,81.4,0.0,0.9997,0.9478,0.9737,North
+Perth (Mid-Lat),-32.05,Equinox,0.0,57.95,0.0,0.9269,0.7426,0.8347,North
+Perth (Mid-Lat),-32.05,Winter Solstice,23.45,34.5,0.0,0.7009,0.4147,0.5578,North
+Pontianak (Equator),0.0,Summer Solstice,-23.45,66.55,180.0,0.8344,0.9726,0.9035,South
+Pontianak (Equator),0.0,Equinox,0.0,90.0,0.0,0.9848,0.9848,0.9848,South
+Pontianak (Equator),0.0,Winter Solstice,23.45,66.55,0.0,0.9726,0.8344,0.9035,North
+Darwin (Tropical),-12.46,Summer Solstice,-23.45,79.01,180.0,0.9336,0.9999,0.9667,South
+Darwin (Tropical),-12.46,Equinox,0.0,77.54,0.0,0.9991,0.9241,0.9616,North
+Darwin (Tropical),-12.46,Winter Solstice,23.45,54.09,0.0,0.8995,0.6958,0.7976,North

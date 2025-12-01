@@ -1,0 +1,68 @@
+"""
+Detailed Analysis of 1-Axis Horizontal Tracker Math
+Identifies the root cause of the noon dip issue.
+"""
+
+import numpy as np
+
+print("=" * 100)
+print("ANALYSIS: 1-Axis Horizontal Tracker Noon Dip")
+print("=" * 100)
+
+print("\nPROBLEM IDENTIFIED:")
+print("-" * 100)
+print("At noon (hour 12): Panel Tilt = 86.1°, Azimuth = 90°E, Power = 18.7 W")
+print("At hour 13:        Panel Tilt = 78.9°, Azimuth = -90°W, Power = 55.3 W")
+print()
+print("The panel is tilting to nearly VERTICAL (86°) when it should stay HORIZONTAL!")
+print("The azimuth also flips discontinuously from East to West at noon.")
+
+print("\n" + "=" * 100)
+print("ROOT CAUSE ANALYSIS:")
+print("=" * 100)
+
+print("\n1. TRACKER SETUP:")
+print("   - Axis: Horizontal (tilt = 0°), pointing North-South (azimuth = 180°S)")
+print("   - Noon normal: Vertical (n0_x=0, n0_y=0, n0_z=1) - FLAT PANEL")
+print("   - Rotation: Panel rotates around the horizontal N-S axis")
+
+print("\n2. ROTATION FORMULA:")
+print("   n_rot_x = v_cross_x * sin(rho)")
+print("   n_rot_y = n0_y * cos(rho)  = 0 * cos(rho) = 0")
+print("   n_rot_z = n0_z * cos(rho)  = 1 * cos(rho) = cos(rho)")
+print()
+print("   Where rho = hour_angle (H)")
+
+print("\n3. EXPECTED BEHAVIOR:")
+print("   - Panel should stay HORIZONTAL (tilt ≈ 0°)")
+print("   - Panel normal should rotate East-West in the horizontal plane")
+print("   - n_rot_z should stay ≈ 1 (vertical normal = horizontal panel)")
+
+print("\n4. ACTUAL BEHAVIOR:")
+print("   - At noon: H = 3.9°, rho = -3.9°")
+print("   - n_rot_z = cos(-3.9°) = 0.998")
+print("   - Panel tilt = arcsin(0.998) = 86.1° ← WRONG!")
+
+print("\n5. THE BUG:")
+print("   We're calculating panel TILT from arcsin(n_rot_z), but for a horizontal")
+print("   tracker, n_rot_z ≈ 1 always (panel stays flat).")
+print("   ")
+print("   arcsin(0.998) = 86.1° is the ELEVATION of the normal vector,")
+print("   which means panel TILT from horizontal = 90° - 86.1° = 3.9°")
+print()
+print("   But we're passing 86.1° to calculate_incident_irradiance as the")
+print("   panel TILT, making it think the panel is nearly vertical!")
+
+print("\n" + "=" * 100)
+print("SOLUTION:")
+print("=" * 100)
+print("For cos(theta) calculation in calculate_incident_irradiance():")
+print("  - Panel tilt (sigma) = angle from horizontal")
+print("  - Panel normal elevation = 90° - sigma")
+print()
+print("Current code:   beta_c = arcsin(n_rot_z) = 86.1° (elevation)")
+print("Should be:      sigma = 90° - arcsin(n_rot_z) = 3.9° (tilt from horizontal)")
+print()
+print("OR: Use the panel normal directly in AOI calculation instead of")
+print("    converting to tilt/azimuth angles!")
+

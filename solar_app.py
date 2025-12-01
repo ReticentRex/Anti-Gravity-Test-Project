@@ -459,6 +459,234 @@ elif st.session_state['user_mode'] == 'Standard':
 elif st.session_state['user_mode'] == 'Advanced':
     st.sidebar.button("🔄 Switch Mode", on_click=lambda: st.session_state.update({'user_mode': None}))
     
+    # Shadow Map Visualization Function
+    def create_shadow_map_viz(obstructions, latitude):
+        """Create 3D hemisphere visualization of sky with obstacle shading"""
+        import numpy as np
+        import plotly.graph_objects as go
+        
+        fig = go.Figure()
+        
+        # Helper: Convert spherical to Cartesian (with flattened hemisphere)
+        def sph_to_cart(azimuth_deg, elevation_deg, r=1):
+            az_rad = np.radians(azimuth_deg)
+            el_rad = np.radians(elevation_deg)
+            # Flatten z-axis by factor of 0.6 to make it less egg-shaped
+            x = r * np.cos(el_rad) * np.sin(az_rad)
+            y = r * np.cos(el_rad) * np.cos(az_rad)
+            z = r * np.sin(el_rad) * 0.6  # Flatten the hemisphere
+            return x, y, z
+        
+        # 1. Ground circle (horizon)
+        theta_ground = np.linspace(0, 2*np.pi, 100)
+        x_ground = np.cos(theta_ground)
+        y_ground = np.sin(theta_ground)
+        z_ground = np.zeros_like(theta_ground)
+        
+        fig.add_trace(go.Scatter3d(
+            x=x_ground, y=y_ground, z=z_ground,
+            mode='lines',
+            line=dict(color='white', width=3),
+            showlegend=False,
+            hoverinfo='skip'
+        ))
+        
+        # 2. Radial azimuth lines every 30° (cardinal and intermediate directions)
+        for azimuth in [0, 30, 60, 90, 120, 150, 180, 210, 240, 270, 300, 330]:
+            x_rad = [0, np.sin(np.radians(azimuth))]
+            y_rad = [0, np.cos(np.radians(azimuth))]
+            z_rad = [0, 0]
+            
+            fig.add_trace(go.Scatter3d(
+                x=x_rad, y=y_rad, z=z_rad,
+                mode='lines',
+                line=dict(color='lightgray', width=1, dash='dot'),
+                showlegend=False,
+                hoverinfo='skip'
+            ))
+        
+        # 3. NSEW compass markers (white text)
+        compass = [
+            ('N', 0, 1.15),
+            ('E', 90, 1.15),
+            ('S', 180, 1.15),
+            ('W', 270, 1.15)
+        ]
+        for label, azimuth, r in compass:
+            x, y, z = sph_to_cart(azimuth, 0, r)
+            fig.add_trace(go.Scatter3d(
+                x=[x], y=[y], z=[z],
+                mode='text',
+                text=[label],
+                textfont=dict(size=16, color='white'),
+                showlegend=False,
+                hoverinfo='skip'
+            ))
+        
+        # 4. Elevation angle arcs (30°, 60°) as dotted lines
+        for elevation in [30, 60]:
+            theta_arc = np.linspace(0, 2*np.pi, 100)
+            x_arc, y_arc, z_arc = [], [], []
+            for az in np.degrees(theta_arc):
+                x, y, z = sph_to_cart(az, elevation)
+                x_arc.append(x)
+                y_arc.append(y)
+                z_arc.append(z)
+            
+            fig.add_trace(go.Scatter3d(
+                x=x_arc, y=y_arc, z=z_arc,
+                mode='lines',
+                line=dict(color='lightgray', width=1, dash='dot'),
+                showlegend=False,
+                hoverinfo='skip'
+            ))
+        
+        # 5. Zenith meridian (vertical plane) with angle marks
+        for azimuth in [0]:  # Can add more meridians if needed
+            elevations = np.linspace(0, 90, 50)
+            x_mer, y_mer, z_mer = [], [], []
+            for el in elevations:
+                x, y, z = sph_to_cart(azimuth, el)
+                x_mer.append(x)
+                y_mer.append(y)
+                z_mer.append(z)
+            
+            fig.add_trace(go.Scatter3d(
+                x=x_mer, y=y_mer, z=z_mer,
+                mode='lines',
+                line=dict(color='lightgray', width=1, dash='dot'),
+                showlegend=False,
+                hoverinfo='skip'
+            ))
+            
+            # Add angle labels on meridian (white text)
+            for el_label in [30, 60, 90]:
+                x, y, z = sph_to_cart(azimuth, el_label, 1.1)
+                fig.add_trace(go.Scatter3d(
+                    x=[x], y=[y], z=[z],
+                    mode='text',
+                    text=[f"{el_label}°"],
+                    textfont=dict(size=10, color='white'),
+                    showlegend=False,
+                    hoverinfo='skip'
+                ))
+        
+        # 6. Obstacle shading as 3D patches
+        for idx, obs in enumerate(obstructions):
+            az_left = obs['az_left']
+            az_right = obs['az_right']
+            elev = obs['elev']
+            
+            # Create obstacle patch (from horizon to elevation)
+            az_range = np.linspace(az_left, az_right, 20)
+            el_range = np.linspace(0, elev, 10)
+            
+            # Create mesh grid for obstacle surface
+            AZ, EL = np.meshgrid(az_range, el_range)
+            X, Y, Z = [], [], []
+            for i in range(AZ.shape[0]):
+                x_row, y_row, z_row = [], [], []
+                for j in range(AZ.shape[1]):
+                    x, y, z = sph_to_cart(AZ[i, j], EL[i, j])
+                    x_row.append(x)
+                    y_row.append(y)
+                    z_row.append(z)
+                X.append(x_row)
+                Y.append(y_row)
+                Z.append(z_row)
+            
+            X = np.array(X)
+            Y = np.array(Y)
+            Z = np.array(Z)
+            
+            # Add shaded surface with transparency
+            fig.add_trace(go.Surface(
+                x=X, y=Y, z=Z,
+                colorscale=[[0, 'rgba(0,0,0,0.3)'], [1, 'rgba(0,0,0,0.3)']],
+                showscale=False,
+                opacity=0.4,
+                name=f'Obstacle {idx+1}',
+                hovertemplate=f'Obstacle {idx+1}<br>Az: {az_left:.0f}°-{az_right:.0f}<br>El: {elev:.0f}°<extra></extra>'
+            ))
+            
+            # Add solid boundary lines
+            # Top edge
+            x_top, y_top, z_top = [], [], []
+            for az in az_range:
+                x, y, z = sph_to_cart(az, elev)
+                x_top.append(x)
+                y_top.append(y)
+                z_top.append(z)
+            fig.add_trace(go.Scatter3d(
+                x=x_top, y=y_top, z=z_top,
+                mode='lines',
+                line=dict(color='black', width=3),
+                showlegend=False,
+                hoverinfo='skip'
+            ))
+            
+            # Left edge
+            x_left, y_left, z_left = [], [], []
+            for el in el_range:
+                x, y, z = sph_to_cart(az_left, el)
+                x_left.append(x)
+                y_left.append(y)
+                z_left.append(z)
+            fig.add_trace(go.Scatter3d(
+                x=x_left, y=y_left, z=z_left,
+                mode='lines',
+                line=dict(color='black', width=3),
+                showlegend=False,
+                hoverinfo='skip'
+            ))
+            
+            # Right edge
+            x_right, y_right, z_right = [], [], []
+            for el in el_range:
+                x, y, z = sph_to_cart(az_right, el)
+                x_right.append(x)
+                y_right.append(y)
+                z_right.append(z)
+            fig.add_trace(go.Scatter3d(
+                x=x_right, y=y_right, z=z_right,
+                mode='lines',
+                line=dict(color='black', width=3),
+                showlegend=False,
+                hoverinfo='skip'
+            ))
+        
+        # 7. Solar panel emoji at center
+        fig.add_trace(go.Scatter3d(
+            x=[0], y=[0], z=[-0.1],
+            mode='text',
+            text=['📱'],  # Solar panel emoji (phone/panel representation)
+            textfont=dict(size=30, color='orange'),
+            showlegend=False,
+            hoverinfo='skip'
+        ))
+        
+        # Layout settings
+        fig.update_layout(
+            title="Sky Hemisphere - Obstruction Map",
+            scene=dict(
+                xaxis=dict(visible=False, range=[-1.2, 1.2]),
+                yaxis=dict(visible=False, range=[-1.2, 1.2]),
+                zaxis=dict(visible=False, range=[-0.2, 0.8]),  # Adjusted for flattened hemisphere
+                camera=dict(
+                    eye=dict(x=1.5, y=1.5, z=1.2),
+                    center=dict(x=0, y=0, z=0)
+                ),
+                aspectmode='cube',
+                bgcolor='rgb(50, 50, 50)'  # Dark gray background
+            ),
+            showlegend=True,
+            height=600,
+            margin=dict(l=0, r=0, t=40, b=0),
+            paper_bgcolor='rgb(50, 50, 50)'
+        )
+        
+        return fig
+    
     # Title and Intro
     st.title("☀️ Solar Resource & PV Performance Model")
     st.markdown("""
@@ -479,6 +707,99 @@ elif st.session_state['user_mode'] == 'Advanced':
     st.sidebar.header("⚡ PV Module Parameters")
     efficiency_percent = st.sidebar.number_input("Module Efficiency (%)", value=14.0, min_value=1.0, max_value=50.0, step=0.1, help="Standard Test Conditions (STC) Efficiency")
     system_capacity_kw = st.sidebar.number_input("System Rated Power (kW)", min_value=0.1, value=5.0, step=0.1)
+
+    st.sidebar.markdown("---")
+    st.sidebar.header("🌳 Shading/Obstruction Map")
+    
+    # Initialize session state for obstructions if not exists
+    if 'obstructions' not in st.session_state:
+        st.session_state['obstructions'] = []
+    if 'enable_shading' not in st.session_state:
+        st.session_state['enable_shading'] = False
+    
+    # Enable shading checkbox
+    enable_shading = st.sidebar.checkbox(
+        "Enable Shading Map",
+        value=st.session_state['enable_shading'],
+        help="Model the effect of obstacles (buildings, trees, etc.) that block direct sunlight",
+        key='enable_shading_checkbox'
+    )
+    st.session_state['enable_shading'] = enable_shading
+    
+    if enable_shading:
+        # Provide azimuth guidance based on latitude
+        if latitude > 23.5:  # Northern Hemisphere
+            guidance = "📍 **Northern latitude**: Focus on obstacles to the **South** (azimuth 90° to 270°)"
+        elif latitude < -23.5:  # Southern Hemisphere
+            guidance = "📍 **Southern latitude**: Focus on obstacles to the **North** (azimuth 270° to 90° via 0°/360°)"
+        else:  # Equatorial
+            guidance = "📍 **Equatorial latitude**: Sun crosses both hemispheres. Check obstacles in **all directions**"
+        
+        st.sidebar.info(guidance)
+        
+        # Display current obstacles
+        if len(st.session_state['obstructions']) > 0:
+            st.sidebar.markdown("**Current Obstacles:**")
+            for idx, obs in enumerate(st.session_state['obstructions']):
+                col1, col2 = st.sidebar.columns([3, 1])
+                with col1:
+                    st.sidebar.text(f"{idx+1}. Az: {obs['az_left']:.0f}° to {obs['az_right']:.0f}°, El: {obs['elev']:.0f}°")
+                with col2:
+                    if st.sidebar.button("×", key=f"delete_obs_{idx}"):
+                        st.session_state['obstructions'].pop(idx)
+                        st.rerun()
+        
+        # Add obstacle form
+        with st.sidebar.expander("+ Add Obstacle", expanded=False):
+            st.markdown("**Measure with smartphone compass:**")
+            az_left = st.number_input(
+                "Left Edge Azimuth (°)",
+                min_value=0.0,
+                max_value=360.0,
+                value=0.0,
+                step=1.0,
+                help="Compass angle to left edge of obstacle (0° = North, 90° = East, 180° = South, 270° = West)",
+                key='input_az_left'
+            )
+            az_right = st.number_input(
+                "Right Edge Azimuth (°)",
+                min_value=0.0,
+                max_value=360.0,
+                value=0.0,
+                step=1.0,
+                help="Compass angle to right edge of obstacle",
+                key='input_az_right'
+            )
+            elevation = st.number_input(
+                "Elevation Angle (°)",
+                min_value=0.0,
+                max_value=90.0,
+                value=0.0,
+                step=1.0,
+                help="Tilt angle to top of obstacle (tilt phone upward to measure)",
+                key='input_elevation'
+            )
+            
+            col_add, col_cancel = st.columns(2)
+            with col_add:
+                if st.button("Add", use_container_width=True):
+                    # Validate and add obstacle
+                    if az_left == az_right:
+                        st.error("Left and right azimuths must be different")
+                    elif elevation == 0:
+                        st.error("Elevation must be greater than 0°")
+                    else:
+                        new_obstacle = {
+                            'az_left': az_left,
+                            'az_right': az_right,
+                            'elev': elevation
+                        }
+                        st.session_state['obstructions'].append(new_obstacle)
+                        st.success(f"Added obstacle {len(st.session_state['obstructions'])}")
+                        st.rerun()
+            with col_cancel:
+                if st.button("Cancel", use_container_width=True):
+                    st.rerun()
 
 
     st.sidebar.markdown("---")
@@ -502,18 +823,44 @@ elif st.session_state['user_mode'] == 'Advanced':
             st.session_state['optimal_yield'] = optimal_yield
             st.session_state['optimize_electrical'] = optimize_electrical
             
-            # Generate Profile with Optimal Tilt
+            # Generate Profile with Optimal Tilt (ALWAYS at 5-minute resolution for smooth graphs)
             df_hourly, totals = model.generate_annual_profile(
                 fixed_tilt=fixed_tilt, 
                 fixed_azimuth=fixed_azimuth, 
                 efficiency=efficiency_percent/100.0,
-                optimal_tilt=optimal_tilt
+                optimal_tilt=optimal_tilt,
+                optimize_electrical=optimize_electrical,
+                time_step_minutes=5  # Always use 5-minute resolution for best graphs
             )
             
             # Store results in session state
             st.session_state['totals'] = totals
-            st.session_state['df_hourly'] = df_hourly
+            st.session_state['df_hourly'] = df_hourly  # This is 5-minute resolution data
             st.session_state['run_simulation'] = True
+
+    # Show shadow map visualization if shading enabled but simulation not run
+    if not st.session_state.get('run_simulation', False):
+        if st.session_state.get('enable_shading', False) and len(st.session_state.get('obstructions', [])) > 0:
+            st.header("🌳 Sky Hemisphere - Obstruction Map")
+            st.markdown("**Preview of obstacles that will block direct sunlight during simulation**")
+            
+            try:
+                fig = create_shadow_map_viz(st.session_state['obstructions'], latitude)
+                st.plotly_chart(fig, use_container_width=True)
+                
+                st.info(f"""
+                **{len(st.session_state['obstructions'])} obstacle(s) defined**
+                
+                This visualization shows the sky hemisphere from the collector's perspective:
+                - **Ground plane**: Labeled with compass directions (N, S, E, W)
+                - **Dotted circles**: 30° and 60° elevation angles
+                - **Dark patches**: Obstacles blocking direct sunlight
+                - **Black boundaries**: Obstacle edges (azimuth left/right, top elevation)
+                
+                Run the simulation above to see the impact on annual energy yield.
+                """)
+            except Exception as e:
+                st.error(f"Could not render shadow map visualization: {e}")
 
     if st.session_state.get('run_simulation'):
         totals = st.session_state.get('totals', {})
@@ -1287,10 +1634,44 @@ elif st.session_state['user_mode'] == 'Advanced':
             for t_col, p_col in temp_power_pairs:
                 if t_col in df_hourly.columns and p_col in df_hourly.columns:
                     df_hourly[f'TxP_{t_col}'] = df_hourly[t_col] * df_hourly[p_col]
+            
+            # Create energy columns (Power × Time_Step_Hours) for proper aggregation
+            # This accounts for variable time steps (5-min, 30-min, hourly)
+            power_cols_to_convert = [
+                'P_Horiz', 'P_Fixed', 'P_Fixed_EW', 'P_Fixed_NS',
+                'P_1Axis_Az', 'P_1Axis_Polar', 'P_1Axis_Horiz', 'P_1Axis_El', 'P_2Axis',
+                'P_Horiz_25C', 'P_Fixed_25C', 'P_Fixed_EW_25C', 'P_Fixed_NS_25C',
+                'P_1Axis_Az_25C', 'P_1Axis_Polar_25C', 'P_1Axis_Horiz_25C', 'P_1Axis_El_25C', 'P_2Axis_25C'
+            ]
+            
+            for p_col in power_cols_to_convert:
+                if p_col in df_hourly.columns:
+                    # Energy (Wh/m²) = Power (W/m²) × Time (hours)
+                    df_hourly[f'E_{p_col}'] = df_hourly[p_col] * df_hourly['Time_Step_Hours']
 
             # 2. Aggregate Sums
             agg_dict = {
                 'TxP_T_amb': 'sum', # Weighted Ambient Sum
+                # Energy sums (already in Wh/m²)
+                'E_P_Horiz': 'sum',
+                'E_P_Fixed': 'sum',
+                'E_P_Fixed_EW': 'sum',
+                'E_P_Fixed_NS': 'sum',
+                'E_P_1Axis_Az': 'sum',
+                'E_P_1Axis_Polar': 'sum',
+                'E_P_1Axis_Horiz': 'sum',
+                'E_P_1Axis_El': 'sum',
+                'E_P_2Axis': 'sum',
+                'E_P_Horiz_25C': 'sum',
+                'E_P_Fixed_25C': 'sum',
+                'E_P_Fixed_EW_25C': 'sum',
+                'E_P_Fixed_NS_25C': 'sum',
+                'E_P_1Axis_Az_25C': 'sum',
+                'E_P_1Axis_Polar_25C': 'sum',
+                'E_P_1Axis_Horiz_25C': 'sum',
+                'E_P_1Axis_El_25C': 'sum',
+                'E_P_2Axis_25C': 'sum',
+                # Keep power sums for weighted temperature averages
                 'P_Horiz': 'sum',
                 'P_Fixed': 'sum',
                 'P_Fixed_EW': 'sum',
@@ -1299,16 +1680,7 @@ elif st.session_state['user_mode'] == 'Advanced':
                 'P_1Axis_Polar': 'sum',
                 'P_1Axis_Horiz': 'sum',
                 'P_1Axis_El': 'sum',
-                'P_2Axis': 'sum',
-                'P_Horiz_25C': 'sum',
-                'P_Fixed_25C': 'sum',
-                'P_Fixed_EW_25C': 'sum',
-                'P_Fixed_NS_25C': 'sum',
-                'P_1Axis_Az_25C': 'sum',
-                'P_1Axis_Polar_25C': 'sum',
-                'P_1Axis_Horiz_25C': 'sum',
-                'P_1Axis_El_25C': 'sum',
-                'P_2Axis_25C': 'sum'
+                'P_2Axis': 'sum'
             }
             
             # Add TxP columns to aggregation
@@ -1337,10 +1709,44 @@ elif st.session_state['user_mode'] == 'Advanced':
             # Note: Removed 14-day rolling average smoothing. 
             # The weighted average method is robust enough to produce smooth curves without artificial smoothing.
             
-            # Convert daily power from W/m² to kWh/m² (sum of hourly W/m² = Wh/m², then /1000)
-            power_cols = [col for col in df_daily.columns if col.startswith('P_') and not col.startswith('TxP_')]
+            # Drop power sum columns (they were only needed for weighted temperature averages)
+            # This prevents duplicates when we rename energy columns below
+            power_cols_to_drop = [
+                'P_Horiz', 'P_Fixed', 'P_Fixed_EW', 'P_Fixed_NS',
+                'P_1Axis_Az', 'P_1Axis_Polar', 'P_1Axis_Horiz', 'P_1Axis_El', 'P_2Axis'
+            ]
+            df_daily = df_daily.drop(columns=[col for col in power_cols_to_drop if col in df_daily.columns])
+            
+            # Rename energy columns and convert from Wh/m² to kWh/m²
+            # These are already properly integrated over time steps
+            energy_renames = {
+                'E_P_Horiz': 'P_Horiz',
+                'E_P_Fixed': 'P_Fixed',
+                'E_P_Fixed_EW': 'P_Fixed_EW',
+                'E_P_Fixed_NS': 'P_Fixed_NS',
+                'E_P_1Axis_Az': 'P_1Axis_Az',
+                'E_P_1Axis_Polar': 'P_1Axis_Polar',
+                'E_P_1Axis_Horiz': 'P_1Axis_Horiz',
+                'E_P_1Axis_El': 'P_1Axis_El',
+                'E_P_2Axis': 'P_2Axis',
+                'E_P_Horiz_25C': 'P_Horiz_25C',
+                'E_P_Fixed_25C': 'P_Fixed_25C',
+                'E_P_Fixed_EW_25C': 'P_Fixed_EW_25C',
+                'E_P_Fixed_NS_25C': 'P_Fixed_NS_25C',
+                'E_P_1Axis_Az_25C': 'P_1Axis_Az_25C',
+                'E_P_1Axis_Polar_25C': 'P_1Axis_Polar_25C',
+                'E_P_1Axis_Horiz_25C': 'P_1Axis_Horiz_25C',
+                'E_P_1Axis_El_25C': 'P_1Axis_El_25C',
+                'E_P_2Axis_25C': 'P_2Axis_25C'
+            }
+            
+            df_daily = df_daily.rename(columns=energy_renames)
+            
+            # Convert from Wh/m² to kWh/m²
+            power_cols = list(energy_renames.values())
             for col in power_cols:
-                df_daily[col] = df_daily[col] / 1000  # Wh/m² to kWh/m²
+                if col in df_daily.columns:
+                    df_daily[col] = df_daily[col] / 1000  # Wh/m² to kWh/m²
         
         
         # Mapping of modes to columns (name, T_cell, P_out, P_at_25C)
@@ -1598,10 +2004,11 @@ elif st.session_state['user_mode'] == 'Advanced':
                     # Show summary stats for this day
                     col1, col2, col3, col4 = st.columns(4)
                     with col1:
-                        daily_energy = df_day[power_col].sum() / 1000  # Wh to kWh
+                        # Energy (Wh/m²) = Sum(Power (W/m²) × Time_Step_Hours)
+                        daily_energy = (df_day[power_col] * df_day['Time_Step_Hours']).sum() / 1000
                         st.metric("Daily Energy", f"{daily_energy:.2f} kWh/m²")
                     with col2:
-                        daily_energy_25c = df_day[power_25c_col].sum() / 1000
+                        daily_energy_25c = (df_day[power_25c_col] * df_day['Time_Step_Hours']).sum() / 1000
                         cooling_benefit = daily_energy_25c - daily_energy
                         st.metric("Cooling Benefit", f"{cooling_benefit:.2f} kWh/m²", delta=f"{cooling_benefit/daily_energy*100:.1f}%")
                     with col3:
@@ -1614,17 +2021,70 @@ elif st.session_state['user_mode'] == 'Advanced':
         st.markdown("---")
 
         # --- Section 6: Hourly Data ---
-        with st.expander("📋 View Hourly Data"):
-            st.dataframe(df_hourly)
+        # --- Section 6: Hourly Data ---
+        
+        # Controls Row (Time Scale + Download)
+        ctrl_col1, ctrl_col2 = st.columns([1, 1])
+        
+        with ctrl_col1:
+            time_scale = st.selectbox(
+                "Time Scale",
+                options=["5 Minute", "30 Minute", "Hourly"],
+                index=0,  # Default to 5-minute (native resolution)
+                help="Choose the time interval for the viewed and downloaded data.",
+                key="time_scale_selector"
+            )
+
+        # Downsample data if needed (instead of re-running simulation)
+        scale_map = {'Hourly': 60, '30 Minute': 30, '5 Minute': 5}
+        target_step_minutes = scale_map.get(time_scale, 5)
+        
+        if target_step_minutes == 5:
+            # No downsampling needed, use original 5-minute data
+            df_download = df_hourly
+        else:
+            # Downsample from 5-minute to requested resolution
+            # Group by time bins and average
+            df_temp = df_hourly.copy()
             
-        # Download Button
-        csv = df_hourly.to_csv(index=False).encode('utf-8')
-        st.download_button(
-            label="Download Hourly Data as CSV",
-            data=csv,
-            file_name='solar_model_output.csv',
-            mime='text/csv',
-        )
+            # Create hour bin identifier (separate from day to avoid collisions)
+            df_temp['hour_bin'] = df_temp['Hour'] // (target_step_minutes / 60)
+            
+            # Columns to average (all numerical columns except Day/Hour/hour_bin)
+            avg_cols = [col for col in df_temp.columns if col not in ['Day', 'Hour', 'hour_bin']]
+            
+            # Group by both Day and hour_bin to avoid collisions
+            df_download = df_temp.groupby(['Day', 'hour_bin'], as_index=False).agg({
+                **{col: 'mean' for col in avg_cols},
+                'Hour': 'first'  # Keep first hour in bin
+            })
+            
+            # Drop the temporary hour_bin column
+            df_download = df_download.drop(columns=['hour_bin'])
+            
+            # Update Time_Step_Hours to reflect the new resolution
+            df_download['Time_Step_Hours'] = target_step_minutes / 60.0
+            
+            # Reorder columns to ensure Day and Hour are first
+            cols = ['Day', 'Hour'] + [c for c in df_download.columns if c not in ['Day', 'Hour']]
+            df_download = df_download[cols]
+
+        # Download Button (in second column, aligned with selector)
+        with ctrl_col2:
+            st.write("") # Spacer for alignment
+            st.write("")
+            csv = df_download.to_csv(index=False).encode('utf-8')
+            st.download_button(
+                label=f"Download {time_scale} CSV",
+                data=csv,
+                file_name=f'solar_model_output_{time_scale.lower().replace(" ", "_")}.csv',
+                mime='text/csv',
+                use_container_width=True
+            )
+
+        # Data Table (Full Width)
+        with st.expander(f"📋 View {time_scale} Data"):
+            st.dataframe(df_download)
 
 else:
     if st.session_state['user_mode'] == 'Advanced':

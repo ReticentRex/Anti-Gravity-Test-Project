@@ -39,7 +39,6 @@ wheels/
 Thumbs.db
 
 # Project specific
-*.csv
 !requirements.txt
 
 
