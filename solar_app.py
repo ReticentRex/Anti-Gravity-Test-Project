@@ -467,17 +467,20 @@ elif st.session_state['user_mode'] == 'Advanced':
         
         fig = go.Figure()
         
-        # Helper: Convert spherical to Cartesian (with flattened hemisphere)
+        # Helper: Convert spherical to Cartesian (TRUE SPHERE - no flattening)
         def sph_to_cart(azimuth_deg, elevation_deg, r=1):
             az_rad = np.radians(azimuth_deg)
             el_rad = np.radians(elevation_deg)
-            # Flatten z-axis by factor of 0.6 to make it less egg-shaped
             x = r * np.cos(el_rad) * np.sin(az_rad)
             y = r * np.cos(el_rad) * np.cos(az_rad)
-            z = r * np.sin(el_rad) * 0.6  # Flatten the hemisphere
+            z = r * np.sin(el_rad)  # True spherical - no flattening
             return x, y, z
         
-        # 1. Ground circle (horizon)
+        # Color schemes
+        azimuth_color = 'rgb(100, 200, 255)'  # Light blue for azimuth
+        elevation_color = 'rgb(255, 180, 100)'  # Light orange for elevation
+        
+        # 1. Ground circle (horizon) - radius = 1 to match zenith height
         theta_ground = np.linspace(0, 2*np.pi, 100)
         x_ground = np.cos(theta_ground)
         y_ground = np.sin(theta_ground)
@@ -491,26 +494,72 @@ elif st.session_state['user_mode'] == 'Advanced':
             hoverinfo='skip'
         ))
         
-        # 2. Radial azimuth lines every 30° (cardinal and intermediate directions)
-        for azimuth in [0, 30, 60, 90, 120, 150, 180, 210, 240, 270, 300, 330]:
+        # 2. Radial azimuth lines with arrow heads and labels (COLOR CODED)
+        azimuth_angles = [0, 30, 60, 90, 120, 150, 180, 210, 240, 270, 300, 330]
+        cardinal_angles = [0, 90, 180, 270]
+        
+        for azimuth in azimuth_angles:
+            # Radial line from center to edge
             x_rad = [0, np.sin(np.radians(azimuth))]
             y_rad = [0, np.cos(np.radians(azimuth))]
             z_rad = [0, 0]
             
-            fig.add_trace(go.Scatter3d(
-                x=x_rad, y=y_rad, z=z_rad,
-                mode='lines',
-                line=dict(color='lightgray', width=1, dash='dot'),
-                showlegend=False,
-                hoverinfo='skip'
-            ))
+            # Make cardinal directions thicker with arrows
+            if azimuth in cardinal_angles:
+                fig.add_trace(go.Scatter3d(
+                    x=x_rad, y=y_rad, z=z_rad,
+                    mode='lines',
+                    line=dict(color=azimuth_color, width=3),
+                    showlegend=False,
+                    hoverinfo='skip'
+                ))
+                
+                # Add arrow head (cone) at end of cardinal lines
+                arrow_tip = 1.0
+                x_arrow = np.sin(np.radians(azimuth)) * arrow_tip
+                y_arrow = np.cos(np.radians(azimuth)) * arrow_tip
+                
+                fig.add_trace(go.Cone(
+                    x=[x_arrow], y=[y_arrow], z=[0],
+                    u=[np.sin(np.radians(azimuth)) * 0.1],
+                    v=[np.cos(np.radians(azimuth)) * 0.1],
+                    w=[0],
+                    colorscale=[[0, azimuth_color], [1, azimuth_color]],
+                    showscale=False,
+                    sizemode='absolute',
+                    sizeref=0.15,
+                    showlegend=False,
+                    hoverinfo='skip'
+                ))
+            else:
+                fig.add_trace(go.Scatter3d(
+                    x=x_rad, y=y_rad, z=z_rad,
+                    mode='lines',
+                    line=dict(color=azimuth_color, width=1, dash='dot'),
+                    showlegend=False,
+                    hoverinfo='skip'
+                ))
+            
+            # Add azimuth angle labels (inside sphere, COLOR CODED, larger font)
+            if azimuth not in cardinal_angles:
+                label_r = 0.75  # Inside the sphere
+                x_label = np.sin(np.radians(azimuth)) * label_r
+                y_label = np.cos(np.radians(azimuth)) * label_r
+                fig.add_trace(go.Scatter3d(
+                    x=[x_label], y=[y_label], z=[0],
+                    mode='text',
+                    text=[f"{azimuth}°"],
+                    textfont=dict(size=13, color=azimuth_color),  # Was 9, now 13
+                    showlegend=False,
+                    hoverinfo='skip'
+                ))
         
-        # 3. NSEW compass markers (white text)
+        # 3. NSEW compass markers (inside sphere on azimuthal plane, COLOR CODED)
         compass = [
-            ('N', 0, 1.15),
-            ('E', 90, 1.15),
-            ('S', 180, 1.15),
-            ('W', 270, 1.15)
+            ('N', 0, 0.65),
+            ('E', 90, 0.65),
+            ('S', 180, 0.65),
+            ('W', 270, 0.65)
         ]
         for label, azimuth, r in compass:
             x, y, z = sph_to_cart(azimuth, 0, r)
@@ -518,12 +567,12 @@ elif st.session_state['user_mode'] == 'Advanced':
                 x=[x], y=[y], z=[z],
                 mode='text',
                 text=[label],
-                textfont=dict(size=16, color='white'),
+                textfont=dict(size=18, color=azimuth_color, family='Arial Black'),  # Was 14, now 18
                 showlegend=False,
                 hoverinfo='skip'
             ))
         
-        # 4. Elevation angle arcs (30°, 60°) as dotted lines
+        # 4. Elevation angle arcs (COLOR CODED)
         for elevation in [30, 60]:
             theta_arc = np.linspace(0, 2*np.pi, 100)
             x_arc, y_arc, z_arc = [], [], []
@@ -536,13 +585,13 @@ elif st.session_state['user_mode'] == 'Advanced':
             fig.add_trace(go.Scatter3d(
                 x=x_arc, y=y_arc, z=z_arc,
                 mode='lines',
-                line=dict(color='lightgray', width=1, dash='dot'),
+                line=dict(color=elevation_color, width=1, dash='dot'),
                 showlegend=False,
                 hoverinfo='skip'
             ))
         
-        # 5. Zenith meridian (vertical plane) with angle marks
-        for azimuth in [0]:  # Can add more meridians if needed
+        # 5. Meridian lines for ALL azimuth angles (birdcage effect)
+        for azimuth in azimuth_angles:
             elevations = np.linspace(0, 90, 50)
             x_mer, y_mer, z_mer = [], [], []
             for el in elevations:
@@ -558,76 +607,88 @@ elif st.session_state['user_mode'] == 'Advanced':
                 showlegend=False,
                 hoverinfo='skip'
             ))
-            
-            # Add angle labels on meridian (white text)
-            for el_label in [30, 60, 90]:
-                x, y, z = sph_to_cart(azimuth, el_label, 1.1)
-                fig.add_trace(go.Scatter3d(
-                    x=[x], y=[y], z=[z],
-                    mode='text',
-                    text=[f"{el_label}°"],
-                    textfont=dict(size=10, color='white'),
-                    showlegend=False,
-                    hoverinfo='skip'
-                ))
         
-        # 6. Obstacle shading as 3D patches
+        # 6. Elevation angle labels on North meridian (COLOR CODED, larger font)
+        for el_label in [30, 60, 90]:
+            x, y, z = sph_to_cart(0, el_label, 1.15)
+            fig.add_trace(go.Scatter3d(
+                x=[x], y=[y], z=[z],
+                mode='text',
+                text=[f"{el_label}°"],
+                textfont=dict(size=14, color=elevation_color),  # Was 10, now 14
+                showlegend=False,
+                hoverinfo='skip'
+            ))
+        
+        # 7. Obstacle shading as 3D patches + GROUND SHADOW PROJECTIONS
         for idx, obs in enumerate(obstructions):
             az_left = obs['az_left']
             az_right = obs['az_right']
             elev = obs['elev']
             
-            # Create obstacle patch (from horizon to elevation)
-            az_range = np.linspace(az_left, az_right, 20)
-            el_range = np.linspace(0, elev, 10)
+            # Handle azimuth wraparound (e.g., 350° to 5° should go through 0°, not backwards)
+            if az_left > az_right:
+                # Wraparound case: create two patches
+                az_ranges = [
+                    np.linspace(az_left, 360, 10),  # First part: left to 360
+                    np.linspace(0, az_right, 10)    # Second part: 0 to right
+                ]
+            else:
+                # Normal case: single range
+                az_ranges = [np.linspace(az_left, az_right, 20)]
             
-            # Create mesh grid for obstacle surface
-            AZ, EL = np.meshgrid(az_range, el_range)
-            X, Y, Z = [], [], []
-            for i in range(AZ.shape[0]):
-                x_row, y_row, z_row = [], [], []
-                for j in range(AZ.shape[1]):
-                    x, y, z = sph_to_cart(AZ[i, j], EL[i, j])
-                    x_row.append(x)
-                    y_row.append(y)
-                    z_row.append(z)
-                X.append(x_row)
-                Y.append(y_row)
-                Z.append(z_row)
+            for az_range in az_ranges:
+                el_range = np.linspace(0, elev, 10)
+                
+                # Create mesh grid for obstacle surface
+                AZ, EL = np.meshgrid(az_range, el_range)
+                X, Y, Z = [], [], []
+                for i in range(AZ.shape[0]):
+                    x_row, y_row, z_row = [], [], []
+                    for j in range(AZ.shape[1]):
+                        x, y, z = sph_to_cart(AZ[i, j], EL[i, j])
+                        x_row.append(x)
+                        y_row.append(y)
+                        z_row.append(z)
+                    X.append(x_row)
+                    Y.append(y_row)
+                    Z.append(z_row)
+                
+                X = np.array(X)
+                Y = np.array(Y)
+                Z = np.array(Z)
+                
+                # Add shaded surface with transparency
+                fig.add_trace(go.Surface(
+                    x=X, y=Y, z=Z,
+                    colorscale=[[0, 'rgba(0,0,0,0.3)'], [1, 'rgba(0,0,0,0.3)']],
+                    showscale=False,
+                    opacity=0.4,
+                    name=f'Obstacle {idx+1}',
+                    hovertemplate=f'Obstacle {idx+1}<br>Az: {az_left:.0f}°-{az_right:.0f}<br>El: {elev:.0f}°<extra></extra>'
+                ))
+                
+                # Add solid boundary lines
+                # Top edge
+                x_top, y_top, z_top = [], [], []
+                for az in az_range:
+                    x, y, z = sph_to_cart(az, elev)
+                    x_top.append(x)
+                    y_top.append(y)
+                    z_top.append(z)
+                fig.add_trace(go.Scatter3d(
+                    x=x_top, y=y_top, z=z_top,
+                    mode='lines',
+                    line=dict(color='black', width=3),
+                    showlegend=False,
+                    hoverinfo='skip'
+                ))
+                
+                # For edge lines, only draw once per obstacle
             
-            X = np.array(X)
-            Y = np.array(Y)
-            Z = np.array(Z)
-            
-            # Add shaded surface with transparency
-            fig.add_trace(go.Surface(
-                x=X, y=Y, z=Z,
-                colorscale=[[0, 'rgba(0,0,0,0.3)'], [1, 'rgba(0,0,0,0.3)']],
-                showscale=False,
-                opacity=0.4,
-                name=f'Obstacle {idx+1}',
-                hovertemplate=f'Obstacle {idx+1}<br>Az: {az_left:.0f}°-{az_right:.0f}<br>El: {elev:.0f}°<extra></extra>'
-            ))
-            
-            # Add solid boundary lines
-            # Top edge
-            x_top, y_top, z_top = [], [], []
-            for az in az_range:
-                x, y, z = sph_to_cart(az, elev)
-                x_top.append(x)
-                y_top.append(y)
-                z_top.append(z)
-            fig.add_trace(go.Scatter3d(
-                x=x_top, y=y_top, z=z_top,
-                mode='lines',
-                line=dict(color='black', width=3),
-                showlegend=False,
-                hoverinfo='skip'
-            ))
-            
-            # Left edge
+            # Left and right edges (drawn after all patches for this obstacle)
             x_left, y_left, z_left = [], [], []
-            for el in el_range:
+            for el in np.linspace(0, elev, 10):
                 x, y, z = sph_to_cart(az_left, el)
                 x_left.append(x)
                 y_left.append(y)
@@ -640,9 +701,8 @@ elif st.session_state['user_mode'] == 'Advanced':
                 hoverinfo='skip'
             ))
             
-            # Right edge
             x_right, y_right, z_right = [], [], []
-            for el in el_range:
+            for el in np.linspace(0, elev, 10):
                 x, y, z = sph_to_cart(az_right, el)
                 x_right.append(x)
                 y_right.append(y)
@@ -654,33 +714,261 @@ elif st.session_state['user_mode'] == 'Advanced':
                 showlegend=False,
                 hoverinfo='skip'
             ))
+            
+            # GROUND SHADOW: Triangular projection on azimuthal plane
+            # Get ground projections of obstacle corners
+            x_left_ground, y_left_ground, _ = sph_to_cart(az_left, 0, 1)
+            x_right_ground, y_right_ground, _ = sph_to_cart(az_right, 0, 1)
+            
+            # For wraparound case, need to handle specially
+            if az_left > az_right:
+                # Wraparound: draw two shadow triangles
+                # Get the point at 0/360
+                x_north, y_north, _ = sph_to_cart(0, 0, 1)
+                
+                # Hatch lines for left section (az_left to 360/0)
+                num_hatch_lines = 5
+                for i in range(num_hatch_lines):
+                    t = i / num_hatch_lines
+                    x_hatch = [0, x_left_ground * (1-t) + x_north * t]
+                    y_hatch = [0, y_left_ground * (1-t) + y_north * t]
+                    z_hatch = [0, 0]
+                    fig.add_trace(go.Scatter3d(
+                        x=x_hatch, y=y_hatch, z=z_hatch,
+                        mode='lines',
+                        line=dict(color='rgba(0,0,0,0.2)', width=1),
+                        showlegend=False,
+                        hoverinfo='skip'
+                    ))
+                
+                # Hatch lines for right section (0/360 to az_right)
+                for i in range(num_hatch_lines):
+                    t = i / num_hatch_lines
+                    x_hatch = [0, x_north * (1-t) + x_right_ground * t]
+                    y_hatch = [0, y_north * (1-t) + y_right_ground * t]
+                    z_hatch = [0, 0]
+                    fig.add_trace(go.Scatter3d(
+                        x=x_hatch, y=y_hatch, z=z_hatch,
+                        mode='lines',
+                        line=dict(color='rgba(0,0,0,0.2)', width=1),
+                        showlegend=False,
+                        hoverinfo='skip'
+                    ))
+                
+                # Draw boundaries
+                fig.add_trace(go.Scatter3d(
+                    x=[0, x_left_ground, x_north, 0],
+                    y=[0, y_left_ground, y_north, 0],
+                    z=[0, 0, 0, 0],
+                    mode='lines',
+                    line=dict(color='black', width=2),
+                    showlegend=False,
+                    hoverinfo='skip'
+                ))
+                fig.add_trace(go.Scatter3d(
+                    x=[0, x_north, x_right_ground, 0],
+                    y=[0, y_north, y_right_ground, 0],
+                    z=[0, 0, 0, 0],
+                    mode='lines',
+                    line=dict(color='black', width=2),
+                    showlegend=False,
+                    hoverinfo='skip'
+                ))
+            else:
+                # Normal case: single triangle
+                num_hatch_lines = 10
+                for i in range(num_hatch_lines):
+                    t = i / num_hatch_lines
+                    x_hatch = [0, x_left_ground * (1-t) + x_right_ground * t]
+                    y_hatch = [0, y_left_ground * (1-t) + y_right_ground * t]
+                    z_hatch = [0, 0]
+                    fig.add_trace(go.Scatter3d(
+                        x=x_hatch, y=y_hatch, z=z_hatch,
+                        mode='lines',
+                        line=dict(color='rgba(0,0,0,0.2)', width=1),
+                        showlegend=False,
+                        hoverinfo='skip'
+                    ))
+                
+                # Draw boundary
+                fig.add_trace(go.Scatter3d(
+                    x=[0, x_left_ground, x_right_ground, 0],
+                    y=[0, y_left_ground, y_right_ground, 0],
+                    z=[0, 0, 0, 0],
+                    mode='lines',
+                    line=dict(color='black', width=2),
+                    showlegend=False,
+                    hoverinfo='skip'
+                ))
         
-        # 7. Solar panel emoji at center
+        # 8. Solar panel emoji at origin
         fig.add_trace(go.Scatter3d(
-            x=[0], y=[0], z=[-0.1],
+            x=[0], y=[0], z=[0],
             mode='text',
-            text=['📱'],  # Solar panel emoji (phone/panel representation)
-            textfont=dict(size=30, color='orange'),
+            text=['🔆'],  # Solar icon emoji
+            textfont=dict(size=40, color='orange'),
             showlegend=False,
             hoverinfo='skip'
         ))
         
-        # Layout settings
+        # 9. Sun Path Visualization (Solstices + Hatching)
+        # Calculate sun paths for Summer (+23.45) and Winter (-23.45) solstices
+        # We need to implement simplified solar geometry here to generate the paths
+        
+        def get_solar_position(lat_deg, declination_deg, hour_angle_deg):
+            """Calculate azimuth and elevation for a given condition"""
+            lat_rad = np.radians(lat_deg)
+            delta_rad = np.radians(declination_deg)
+            h_rad = np.radians(hour_angle_deg)
+            
+            # Elevation (beta)
+            sin_beta = np.cos(lat_rad) * np.cos(delta_rad) * np.cos(h_rad) + \
+                       np.sin(lat_rad) * np.sin(delta_rad)
+            beta_rad = np.arcsin(np.clip(sin_beta, -1, 1))
+            beta_deg = np.degrees(beta_rad)
+            
+            # Azimuth (phi_s)
+            # Avoid division by zero at zenith
+            if np.abs(beta_deg - 90) < 1e-6:
+                phi_s_deg = 0
+            else:
+                cos_beta = np.cos(beta_rad)
+                sin_phi_s = (np.cos(delta_rad) * np.sin(h_rad)) / cos_beta
+                phi_s_rad = np.arcsin(np.clip(sin_phi_s, -1, 1))
+                phi_s_deg = np.degrees(phi_s_rad)
+                
+                # Quadrant check (same logic as solar_model.py)
+                if np.tan(lat_rad) == 0:
+                    check_val = np.inf if np.tan(delta_rad) >= 0 else -np.inf
+                else:
+                    check_val = np.tan(delta_rad) / np.tan(lat_rad)
+                
+                is_north_hemisphere = lat_deg >= 0
+                condition_met = np.cos(h_rad) >= check_val
+                
+                if is_north_hemisphere:
+                    if condition_met: # |phi| > 90 (South)
+                         if phi_s_deg > 0: phi_s_deg = 180 - phi_s_deg
+                         else: phi_s_deg = -180 - phi_s_deg
+                else: # Southern Hemisphere
+                    if not condition_met: # |phi| > 90 (South)
+                        if phi_s_deg > 0: phi_s_deg = 180 - phi_s_deg
+                        else: phi_s_deg = -180 - phi_s_deg
+            
+            return phi_s_deg, beta_deg
+
+        # Generate paths
+        decls = [23.45, -23.45]
+        solstice_names = ["Solstice 1", "Solstice 2"]
+        
+        # Determine labels based on hemisphere
+        if latitude >= 0:
+            solstice_labels = ["Summer Solstice (Jun)", "Winter Solstice (Dec)"]
+        else:
+            solstice_labels = ["Winter Solstice (Jun)", "Summer Solstice (Dec)"]
+            
+        # Store path points for hatching
+        path_points = {d: [] for d in decls}
+        
+        # Draw Solstice Paths (Solid Gold Lines)
+        for i, decl in enumerate(decls):
+            # Generate points for the day
+            # Check sunset hour angle to determine range
+            lat_rad = np.radians(latitude)
+            delta_rad = np.radians(decl)
+            
+            # Sunset hour angle calculation
+            tan_prod = -np.tan(lat_rad) * np.tan(delta_rad)
+            if tan_prod > 1: h_ss = 0 # Polar winter (no rise)
+            elif tan_prod < -1: h_ss = 180 # Polar summer (no set)
+            else: h_ss = np.degrees(np.arccos(tan_prod))
+            
+            # Generate hour angles
+            if h_ss > 0:
+                hours = np.linspace(-h_ss, h_ss, 100)
+                x_path, y_path, z_path = [], [], []
+                
+                for h in hours:
+                    az, el = get_solar_position(latitude, decl, h)
+                    if el >= 0: # Only plot above horizon
+                        x, y, z = sph_to_cart(az, el)
+                        x_path.append(x)
+                        y_path.append(y)
+                        z_path.append(z)
+                
+                fig.add_trace(go.Scatter3d(
+                    x=x_path, y=y_path, z=z_path,
+                    mode='lines',
+                    line=dict(color='gold', width=5),
+                    name=solstice_labels[i],
+                    hovertemplate=f'{solstice_labels[i]}<br>Az: %{{x:.1f}}<br>El: %{{z:.1f}}<extra></extra>'
+                ))
+
+        # Draw Hatching (Gold Lines connecting solstices at hourly intervals)
+        # Iterate hour angles from -180 to 180 every 15 degrees (1 hour)
+        for h in range(-180, 181, 15):
+            # Calculate positions for both solstices
+            az1, el1 = get_solar_position(latitude, 23.45, h)
+            az2, el2 = get_solar_position(latitude, -23.45, h)
+            
+            # Only draw if at least one point is above horizon (or close to it)
+            # Actually, strictly we should check if the sun is up.
+            # If el < 0, it's night. We only want to hatch the "day" region.
+            # But the analemma exists geometrically.
+            # Let's only draw segments where BOTH are above -5 degrees (to catch horizon crossing)
+            # Or better: check if this hour is within the sunset range for AT LEAST one solstice.
+            
+            if el1 > 0 or el2 > 0:
+                # If one is below horizon, clip it to 0? 
+                # For visualization, simple connection is fine, the ground plane hides below 0.
+                # But let's clip elevation to 0 to keep it clean on the dome.
+                el1_clamped = max(0, el1)
+                el2_clamped = max(0, el2)
+                
+                # If both were below 0, we wouldn't be here (mostly).
+                # But if one is -10 and one is 10, we draw from 0 to 10?
+                # No, let's just draw the line. The user wants the "area between".
+                # If we clip, the line might look bent.
+                # Let's just draw the full segment and let the z-axis clipping (if any) or ground plane handle it.
+                # But wait, we don't want lines going *under* the ground visible if the ground is transparent-ish.
+                # The ground is just a circle line, so under-ground lines are visible.
+                # So we should skip if BOTH are < 0.
+                
+                if el1 < 0 and el2 < 0: continue
+                
+                x1, y1, z1 = sph_to_cart(az1, el1)
+                x2, y2, z2 = sph_to_cart(az2, el2)
+                
+                fig.add_trace(go.Scatter3d(
+                    x=[x1, x2], y=[y1, y2], z=[z1, z2],
+                    mode='lines',
+                    line=dict(color='gold', width=1), # Thinner gold line for hatching
+                    showlegend=False,
+                    hoverinfo='skip'
+                ))
+        
+        # Determine camera orientation based on hemisphere
+        if latitude < 0:  # Southern Hemisphere - look from SE toward NW (sun is to the north)
+            camera_eye = dict(x=1.1, y=-0.5, z=0.8)  # Looking from SE, isometric down
+        else:  # Northern Hemisphere - look from NE toward SW (sun is to the south)
+            camera_eye = dict(x=1.1, y=0.5, z=0.8)  # Looking from NE, isometric down
+        
+        # Layout settings - MORE ZOOMED IN (75% more)
         fig.update_layout(
             title="Sky Hemisphere - Obstruction Map",
             scene=dict(
                 xaxis=dict(visible=False, range=[-1.2, 1.2]),
                 yaxis=dict(visible=False, range=[-1.2, 1.2]),
-                zaxis=dict(visible=False, range=[-0.2, 0.8]),  # Adjusted for flattened hemisphere
+                zaxis=dict(visible=False, range=[-0.3, 1.3]),  # Raised range
                 camera=dict(
-                    eye=dict(x=1.5, y=1.5, z=1.2),
-                    center=dict(x=0, y=0, z=0)
+                    eye=camera_eye,  # Dynamic based on hemisphere
+                    center=dict(x=0, y=0, z=-0.2)  # Look slightly BELOW origin to move diagram UP
                 ),
-                aspectmode='cube',
-                bgcolor='rgb(50, 50, 50)'  # Dark gray background
+                aspectmode='data',
+                bgcolor='rgb(50, 50, 50)'
             ),
             showlegend=True,
-            height=600,
+            height=670,  # Reduced by 30% from 960
             margin=dict(l=0, r=0, t=40, b=0),
             paper_bgcolor='rgb(50, 50, 50)'
         )
