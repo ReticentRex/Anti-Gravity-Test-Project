@@ -272,6 +272,174 @@ class SolarModel:
             'global_horizontal': GHI
         }
 
+
+    def convert_compass_to_sim(self, compass_angle):
+        """Convert compass angle (0-360) to simulation convention (-180 to 180)"""
+        if compass_angle > 180:
+            return compass_angle - 360
+        return compass_angle
+
+    def is_azimuth_in_range(self, az, az_left, az_right):
+        """
+        Check if azimuth is within range, handling 360° wraparound.
+        All angles should be in 0-360 range.
+        """
+        # Normalize inputs to 0-360
+        az = az % 360
+        az_left = az_left % 360
+        az_right = az_right % 360
+        
+        # Handle wraparound case (e.g., 350° to 10°)
+        if az_left > az_right:
+            return az >= az_left or az <= az_right
+        else:
+            return az_left <= az <= az_right
+
+    def check_sun_blocked(self, azimuth_sun, elevation_sun, obstructions):
+        """
+        Check if sun is blocked by any obstacle.
+        
+        Args:
+            azimuth_sun: Sun azimuth from solar geometry (North=0, East=+90, West=-90)
+            elevation_sun: Sun elevation (0 to 90)
+            obstructions: List of {'az_left', 'az_right', 'elev'} in compass convention (0-360)
+        
+        Returns:
+            bool: True if sun is blocked
+        """
+        if not obstructions:
+            return False
+        
+        # Convert sun azimuth from -90/+90 convention to 0-360 for comparison
+        # North=0, East=90, South=180, West=270
+        sun_az_360 = azimuth_sun
+        if sun_az_360 < 0:
+            sun_az_360 += 360
+            
+        for obs in obstructions:
+            # Obstruction angles are already in 0-360 compass convention
+            az_left = obs['az_left']
+            az_right = obs['az_right']
+            elev_obs = obs['elev']
+            
+            # Check if sun elevation is below obstacle
+            if elevation_sun <= elev_obs:
+                # Check if sun azimuth is within obstacle range
+                if self.is_azimuth_in_range(sun_az_360, az_left, az_right):
+                    return True  # Sun is blocked
+        
+        return False  # Sun is not blocked
+
+    def calculate_annual_shading_loss(self, obstructions):
+        """
+        Calculate annual energy loss due to shading using path-crossing detection.
+        
+        Returns:
+            dict: {
+                'total_potential_kwh_m2': float,
+                'total_loss_kwh_m2': float,
+                'loss_percent': float,
+                'daily_stats': list of dicts {day, potential, loss, percent},
+                'debug_log': list of debug messages
+            }
+        """
+        total_potential = 0
+        total_loss = 0
+        daily_stats = []
+        debug_log = []
+        
+        # Track first few affected and unaffected days for debugging
+        affected_count = 0
+        unaffected_count = 0
+        
+        # Iterate through all days
+        for day in range(1, 366):
+            day_potential = 0
+            day_loss = 0
+            day_blocked_minutes = 0
+            day_total_minutes = 0
+            
+            # Track azimuth range for this day
+            day_azimuths = []
+            
+            # Use 1-minute steps for accurate path-crossing detection
+            time_step_hours = 1.0 / 60.0  # 1 minute
+            prev_geo = None
+            prev_blocked = None
+            
+            for hour in np.arange(0, 24, time_step_hours):
+                geo = self.calculate_geometry(day, hour)
+                
+                if geo['elevation'] > 0:
+                    day_total_minutes += 1
+                    irr = self.calculate_irradiance(day, geo['elevation'])
+                    ghi = irr['global_horizontal']
+                    
+                    # Track azimuth
+                    day_azimuths.append(geo['azimuth'])
+                    
+                    # Add to potential (W/m2 * hours)
+                    step_energy = ghi * time_step_hours / 1000  # kWh/m2
+                    day_potential += step_energy
+                    
+                    # Check shading
+                    is_blocked = self.check_sun_blocked(geo['azimuth'], geo['elevation'], obstructions)
+                    
+                    if is_blocked:
+                        day_blocked_minutes += 1
+                        # Calculate Beam Horizontal loss
+                        dni = irr['dni']
+                        beam_horiz = dni * np.sin(np.radians(geo['elevation']))
+                        step_loss = beam_horiz * time_step_hours / 1000
+                        day_loss += step_loss
+                
+                prev_geo = geo
+                prev_blocked = is_blocked if geo['elevation'] > 0 else None
+            
+            total_potential += day_potential
+            total_loss += day_loss
+            
+            # Debug logging for first few days
+            if day_potential > 0:
+                is_affected = day_loss > 0
+                
+                if is_affected and affected_count < 3:
+                    az_min = min(day_azimuths) if day_azimuths else 0
+                    az_max = max(day_azimuths) if day_azimuths else 0
+                    debug_log.append(f"AFFECTED Day {day}: {day_blocked_minutes}/{day_total_minutes} mins blocked, "
+                                   f"Az range: {az_min:.1f}° to {az_max:.1f}°, "
+                                   f"Loss: {day_loss:.3f} kWh/m² ({(day_loss/day_potential)*100:.1f}%)")
+                    affected_count += 1
+                    
+                elif not is_affected and unaffected_count < 3:
+                    az_min = min(day_azimuths) if day_azimuths else 0
+                    az_max = max(day_azimuths) if day_azimuths else 0
+                    debug_log.append(f"UNAFFECTED Day {day}: 0/{day_total_minutes} mins blocked, "
+                                   f"Az range: {az_min:.1f}° to {az_max:.1f}°")
+                    unaffected_count += 1
+                
+                daily_stats.append({
+                    'day': day,
+                    'potential_kwh_m2': day_potential,
+                    'loss_kwh_m2': day_loss,
+                    'loss_percent': (day_loss / day_potential) * 100
+                })
+            else:
+                daily_stats.append({
+                    'day': day,
+                    'potential_kwh_m2': 0,
+                    'loss_kwh_m2': 0,
+                    'loss_percent': 0
+                })
+                
+        return {
+            'total_potential_kwh_m2': total_potential,
+            'total_loss_kwh_m2': total_loss,
+            'loss_percent': (total_loss / total_potential * 100) if total_potential > 0 else 0,
+            'daily_stats': daily_stats,
+            'debug_log': debug_log
+        }
+
     def calculate_incident_irradiance(self, beta_deg, phi_s_deg, sigma_deg, phi_c_deg, Ib, C, rho=0.2):
         """
         Calculate total incident irradiance (Ic) on a tilted surface.

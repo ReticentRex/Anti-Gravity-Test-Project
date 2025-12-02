@@ -460,12 +460,35 @@ elif st.session_state['user_mode'] == 'Advanced':
     st.sidebar.button("🔄 Switch Mode", on_click=lambda: st.session_state.update({'user_mode': None}))
     
     # Shadow Map Visualization Function
-    def create_shadow_map_viz(obstructions, latitude):
+    def create_shadow_map_viz(obstructions, latitude, longitude=0):
         """Create 3D hemisphere visualization of sky with obstacle shading"""
         import numpy as np
         import plotly.graph_objects as go
+        from solar_model import SolarModel
         
         fig = go.Figure()
+        
+        # Calculate Solstice Irradiance for Legend
+        model = SolarModel(latitude, longitude)
+        
+        # Solstice days
+        day_summer = 172 if latitude >= 0 else 355
+        day_winter = 355 if latitude >= 0 else 172
+        
+        def get_daily_insolation(day):
+            total_ghi = 0
+            # Integrate over 24 hours
+            for h in np.linspace(0, 23.9, 100): # 100 steps for accuracy
+                geo = model.calculate_geometry(day, h)
+                if geo['elevation'] > 0:
+                    irr = model.calculate_irradiance(day, geo['elevation'])
+                    total_ghi += irr['global_horizontal']
+            # Average W/m2 * 24 hours / 1000 = kWh/m2/day
+            # Since we summed 100 points over 24 hours, dt = 24/100
+            return total_ghi * (24/100) / 1000
+            
+        val_summer = get_daily_insolation(day_summer)
+        val_winter = get_daily_insolation(day_winter)
         
         # Helper: Convert spherical to Cartesian (TRUE SPHERE - no flattening)
         def sph_to_cart(azimuth_deg, elevation_deg, r=1):
@@ -479,6 +502,41 @@ elif st.session_state['user_mode'] == 'Advanced':
         # Color schemes
         azimuth_color = 'rgb(100, 200, 255)'  # Light blue for azimuth
         elevation_color = 'rgb(255, 180, 100)'  # Light orange for elevation
+        
+        # Define colors for Solstices (used later)
+        color_winter = 'rgb(100, 149, 237)' # CornflowerBlue
+        color_summer = 'rgb(255, 160, 122)' # LightSalmon
+        
+        # Add Dummy Trace for Gradient Legend
+        # Note: We need at least one point for the colorbar to show.
+        # We place it at the origin (z=0) and make it invisible (size=0, opacity=0).
+        fig.add_trace(go.Scatter3d(
+            x=[0], y=[0], z=[0],
+            mode='markers',
+            marker=dict(
+                color=[val_winter], # Dummy value
+                colorscale=[[0, color_winter], [1, color_summer]],
+                cmin=val_winter,
+                cmax=val_summer,
+                showscale=True,
+                size=0, # Invisible
+                opacity=0,
+                colorbar=dict(
+                    title=dict(text="Daily Insolation (kWh/m²)", side="top"),
+                    orientation="h", # Horizontal
+                    tickmode="array",
+                    tickvals=[val_winter, val_summer],
+                    ticktext=[f"{val_winter:.1f} (Winter)", f"{val_summer:.1f} (Summer)"],
+                    ticks="outside",
+                    x=0.5, # Center horizontally
+                    y=0.0, # Bottom
+                    len=0.4, # Reduced width
+                    thickness=10 # Reduced height
+                )
+            ),
+            showlegend=False,
+            hoverinfo='skip'
+        ))
         
         # 1. Ground circle (horizon) - radius = 1 to match zenith height
         theta_ground = np.linspace(0, 2*np.pi, 100)
@@ -717,100 +775,6 @@ elif st.session_state['user_mode'] == 'Advanced':
             
             # GROUND SHADOW: Triangular projection on azimuthal plane
             # Get ground projections of obstacle corners
-            x_left_ground, y_left_ground, _ = sph_to_cart(az_left, 0, 1)
-            x_right_ground, y_right_ground, _ = sph_to_cart(az_right, 0, 1)
-            
-            # For wraparound case, need to handle specially
-            if az_left > az_right:
-                # Wraparound: draw two shadow triangles
-                # Get the point at 0/360
-                x_north, y_north, _ = sph_to_cart(0, 0, 1)
-                
-                # Hatch lines for left section (az_left to 360/0)
-                num_hatch_lines = 5
-                for i in range(num_hatch_lines):
-                    t = i / num_hatch_lines
-                    x_hatch = [0, x_left_ground * (1-t) + x_north * t]
-                    y_hatch = [0, y_left_ground * (1-t) + y_north * t]
-                    z_hatch = [0, 0]
-                    fig.add_trace(go.Scatter3d(
-                        x=x_hatch, y=y_hatch, z=z_hatch,
-                        mode='lines',
-                        line=dict(color='rgba(0,0,0,0.2)', width=1),
-                        showlegend=False,
-                        hoverinfo='skip'
-                    ))
-                
-                # Hatch lines for right section (0/360 to az_right)
-                for i in range(num_hatch_lines):
-                    t = i / num_hatch_lines
-                    x_hatch = [0, x_north * (1-t) + x_right_ground * t]
-                    y_hatch = [0, y_north * (1-t) + y_right_ground * t]
-                    z_hatch = [0, 0]
-                    fig.add_trace(go.Scatter3d(
-                        x=x_hatch, y=y_hatch, z=z_hatch,
-                        mode='lines',
-                        line=dict(color='rgba(0,0,0,0.2)', width=1),
-                        showlegend=False,
-                        hoverinfo='skip'
-                    ))
-                
-                # Draw boundaries
-                fig.add_trace(go.Scatter3d(
-                    x=[0, x_left_ground, x_north, 0],
-                    y=[0, y_left_ground, y_north, 0],
-                    z=[0, 0, 0, 0],
-                    mode='lines',
-                    line=dict(color='black', width=2),
-                    showlegend=False,
-                    hoverinfo='skip'
-                ))
-                fig.add_trace(go.Scatter3d(
-                    x=[0, x_north, x_right_ground, 0],
-                    y=[0, y_north, y_right_ground, 0],
-                    z=[0, 0, 0, 0],
-                    mode='lines',
-                    line=dict(color='black', width=2),
-                    showlegend=False,
-                    hoverinfo='skip'
-                ))
-            else:
-                # Normal case: single triangle
-                num_hatch_lines = 10
-                for i in range(num_hatch_lines):
-                    t = i / num_hatch_lines
-                    x_hatch = [0, x_left_ground * (1-t) + x_right_ground * t]
-                    y_hatch = [0, y_left_ground * (1-t) + y_right_ground * t]
-                    z_hatch = [0, 0]
-                    fig.add_trace(go.Scatter3d(
-                        x=x_hatch, y=y_hatch, z=z_hatch,
-                        mode='lines',
-                        line=dict(color='rgba(0,0,0,0.2)', width=1),
-                        showlegend=False,
-                        hoverinfo='skip'
-                    ))
-                
-                # Draw boundary
-                fig.add_trace(go.Scatter3d(
-                    x=[0, x_left_ground, x_right_ground, 0],
-                    y=[0, y_left_ground, y_right_ground, 0],
-                    z=[0, 0, 0, 0],
-                    mode='lines',
-                    line=dict(color='black', width=2),
-                    showlegend=False,
-                    hoverinfo='skip'
-                ))
-        
-        # 8. Solar panel emoji at origin
-        fig.add_trace(go.Scatter3d(
-            x=[0], y=[0], z=[0],
-            mode='text',
-            text=['🔆'],  # Solar icon emoji
-            textfont=dict(size=40, color='orange'),
-            showlegend=False,
-            hoverinfo='skip'
-        ))
-        
         # 9. Sun Path Visualization (Solstices + Hatching)
         # Calculate sun paths for Summer (+23.45) and Winter (-23.45) solstices
         # We need to implement simplified solar geometry here to generate the paths
@@ -859,19 +823,36 @@ elif st.session_state['user_mode'] == 'Advanced':
 
         # Generate paths
         decls = [23.45, -23.45]
-        solstice_names = ["Solstice 1", "Solstice 2"]
         
-        # Determine labels based on hemisphere
+        # Define colors
+        # Winter: CornflowerBlue (distinct from azimuth LightBlue)
+        # Summer: LightSalmon (Pastel Orange)
+        color_winter = 'rgb(100, 149, 237)' 
+        color_summer = 'rgb(255, 160, 122)'
+        
+        # Determine labels and colors based on hemisphere
         if latitude >= 0:
-            solstice_labels = ["Summer Solstice (Jun)", "Winter Solstice (Dec)"]
+            # Northern Hemisphere
+            # +23.45 is Summer, -23.45 is Winter
+            solstice_configs = [
+                {"label": "Summer Solstice (Jun)", "color": color_summer, "type": "summer"},
+                {"label": "Winter Solstice (Dec)", "color": color_winter, "type": "winter"}
+            ]
         else:
-            solstice_labels = ["Winter Solstice (Jun)", "Summer Solstice (Dec)"]
+            # Southern Hemisphere
+            # +23.45 is Winter, -23.45 is Summer
+            solstice_configs = [
+                {"label": "Winter Solstice (Jun)", "color": color_winter, "type": "winter"},
+                {"label": "Summer Solstice (Dec)", "color": color_summer, "type": "summer"}
+            ]
             
         # Store path points for hatching
         path_points = {d: [] for d in decls}
         
-        # Draw Solstice Paths (Solid Gold Lines)
+        # Draw Solstice Paths (Solid Colored Lines)
         for i, decl in enumerate(decls):
+            config = solstice_configs[i]
+            
             # Generate points for the day
             # Check sunset hour angle to determine range
             lat_rad = np.radians(latitude)
@@ -899,50 +880,46 @@ elif st.session_state['user_mode'] == 'Advanced':
                 fig.add_trace(go.Scatter3d(
                     x=x_path, y=y_path, z=z_path,
                     mode='lines',
-                    line=dict(color='gold', width=5),
-                    name=solstice_labels[i],
-                    hovertemplate=f'{solstice_labels[i]}<br>Az: %{{x:.1f}}<br>El: %{{z:.1f}}<extra></extra>'
+                    line=dict(color=config["color"], width=5),
+                    name=config["label"],
+                    hovertemplate=f'{config["label"]}<br>Az: %{{x:.1f}}<br>El: %{{z:.1f}}<extra></extra>'
                 ))
 
-        # Draw Hatching (Gold Lines connecting solstices at hourly intervals)
+        # Draw Hatching (Gradient Curves connecting solstices at hourly intervals)
         # Iterate hour angles from -180 to 180 every 15 degrees (1 hour)
         for h in range(-180, 181, 15):
-            # Calculate positions for both solstices
-            az1, el1 = get_solar_position(latitude, 23.45, h)
-            az2, el2 = get_solar_position(latitude, -23.45, h)
+            # Determine gradient colors based on which point is Summer/Winter
+            c1 = solstice_configs[0]["color"]  # +23.45
+            c2 = solstice_configs[1]["color"]  # -23.45
             
-            # Only draw if at least one point is above horizon (or close to it)
-            # Actually, strictly we should check if the sun is up.
-            # If el < 0, it's night. We only want to hatch the "day" region.
-            # But the analemma exists geometrically.
-            # Let's only draw segments where BOTH are above -5 degrees (to catch horizon crossing)
-            # Or better: check if this hour is within the sunset range for AT LEAST one solstice.
+            # Interpolate along the curved path on the hemisphere
+            # Sample multiple declination values between +23.45 and -23.45
+            decl_samples = np.linspace(23.45, -23.45, 20)
             
-            if el1 > 0 or el2 > 0:
-                # If one is below horizon, clip it to 0? 
-                # For visualization, simple connection is fine, the ground plane hides below 0.
-                # But let's clip elevation to 0 to keep it clean on the dome.
-                el1_clamped = max(0, el1)
-                el2_clamped = max(0, el2)
+            x_curve, y_curve, z_curve, color_params = [], [], [], []
+            
+            for i, decl in enumerate(decl_samples):
+                az, el = get_solar_position(latitude, decl, h)
                 
-                # If both were below 0, we wouldn't be here (mostly).
-                # But if one is -10 and one is 10, we draw from 0 to 10?
-                # No, let's just draw the line. The user wants the "area between".
-                # If we clip, the line might look bent.
-                # Let's just draw the full segment and let the z-axis clipping (if any) or ground plane handle it.
-                # But wait, we don't want lines going *under* the ground visible if the ground is transparent-ish.
-                # The ground is just a circle line, so under-ground lines are visible.
-                # So we should skip if BOTH are < 0.
-                
-                if el1 < 0 and el2 < 0: continue
-                
-                x1, y1, z1 = sph_to_cart(az1, el1)
-                x2, y2, z2 = sph_to_cart(az2, el2)
-                
+                if el > 0:  # Only include points above horizon
+                    x, y, z = sph_to_cart(az, el)
+                    x_curve.append(x)
+                    y_curve.append(y)
+                    z_curve.append(z)
+                    # Color parameter: 0 at summer solstice (+23.45), 1 at winter (-23.45)
+                    color_params.append(i / (len(decl_samples) - 1))
+            
+            # Draw the curved line if we have at least 2 points
+            if len(x_curve) >= 2:
                 fig.add_trace(go.Scatter3d(
-                    x=[x1, x2], y=[y1, y2], z=[z1, z2],
+                    x=x_curve, y=y_curve, z=z_curve,
                     mode='lines',
-                    line=dict(color='gold', width=1), # Thinner gold line for hatching
+                    line=dict(
+                        width=2,
+                        color=color_params,
+                        colorscale=[[0, c1], [1, c2]],
+                        showscale=False
+                    ),
                     showlegend=False,
                     hoverinfo='skip'
                 ))
@@ -1133,20 +1110,244 @@ elif st.session_state['user_mode'] == 'Advanced':
             st.markdown("**Preview of obstacles that will block direct sunlight during simulation**")
             
             try:
-                fig = create_shadow_map_viz(st.session_state['obstructions'], latitude)
+                fig = create_shadow_map_viz(st.session_state['obstructions'], latitude, longitude)
                 st.plotly_chart(fig, use_container_width=True)
                 
                 st.info(f"""
-                **{len(st.session_state['obstructions'])} obstacle(s) defined**
-                
-                This visualization shows the sky hemisphere from the collector's perspective:
-                - **Ground plane**: Labeled with compass directions (N, S, E, W)
-                - **Dotted circles**: 30° and 60° elevation angles
-                - **Dark patches**: Obstacles blocking direct sunlight
-                - **Black boundaries**: Obstacle edges (azimuth left/right, top elevation)
-                
-                Run the simulation above to see the impact on annual energy yield.
+                **How to read this graph:**
+                This is a "fish-eye" projection of the sky dome above your solar panel.
+                *   **The Center** represents the Zenith (straight up, 90° elevation).
+                *   **The Outer Edge** represents the Horizon (0° elevation).
+                *   **Curved Obstacles:** Real-world vertical objects (like trees or buildings) appear as curved shapes on this dome because they span a range of angles that converge towards the zenith. This is a natural effect of projecting a 3D rectangular world onto a spherical sky map.
+                *   **Golden Band:** The hatched gold area shows the sun's annual path. If an obstacle overlaps this band, it will cast shadows on your panel during the year.
                 """)
+                
+                # Shading Analytics Section
+                st.markdown("---")
+                st.header("📊 Shading Impact Analysis")
+                st.markdown("**Annual energy loss due to obstructions**")
+                
+                with st.spinner("Calculating shading impact..."):
+                    from solar_model import SolarModel
+                    model = SolarModel(latitude, longitude)
+                    analytics = model.calculate_annual_shading_loss(st.session_state['obstructions'])
+                
+                # Diagnostic Information
+                with st.expander("🔍 Diagnostic Information (Click to expand)"):
+                    st.markdown("**Understanding the Results:**")
+                    st.markdown("""
+                    - The **hatching lines** in the visualization represent **constant hour angles** (same time of day) across different dates
+                    - The **actual daily sun path** for any given day is a **single arc** (approximately along one of the solstice paths)
+                    - An obstruction only affects a day if the sun's entire daily arc passes through the obstruction's **azimuth range**
+                    """)
+                    
+                    # Show first unaffected day vs first affected day
+                    daily_stats = analytics['daily_stats']
+                    unaffected = [d for d in daily_stats if d['loss_kwh_m2'] == 0 and d['potential_kwh_m2'] > 0]
+                    affected = [d for d in daily_stats if d['loss_kwh_m2'] > 0]
+                    
+                    if unaffected and affected:
+                        st.markdown("### Example Day Comparison")
+                        col1, col2 = st.columns(2)
+                        
+                        sample_unaffected = unaffected[0]
+                        sample_affected = affected[0]
+                        
+                        # Calculate sun path azimuth range for these days
+                        def get_sun_path_az_range(day):
+                            geo_sunrise = model.calculate_geometry(day, 6)  # Approximate sunrise
+                            geo_noon = model.calculate_geometry(day, 12)
+                            geo_sunset = model.calculate_geometry(day, 18)  # Approximate sunset
+                            
+                            azimuths = []
+                            for h in np.linspace(0, 24, 48):
+                                geo = model.calculate_geometry(day, h)
+                                if geo['elevation'] > 0:
+                                    azimuths.append(geo['azimuth'])
+                            
+                            if azimuths:
+                                return min(azimuths), max(azimuths)
+                            return None, None
+                        
+                        unaf_min, unaf_max = get_sun_path_az_range(sample_unaffected['day'])
+                        af_min, af_max = get_sun_path_az_range(sample_affected['day'])
+                        
+                        with col1:
+                            st.markdown(f"**Unaffected Day {sample_unaffected['day']}**")
+                            st.write(f"Potential: {sample_unaffected['potential_kwh_m2']:.2f} kWh/m²")
+                            st.write(f"Loss: {sample_unaffected['loss_kwh_m2']:.2f} kWh/m²")
+                            if unaf_min is not None:
+                                st.write(f"Sun azimuth range: {unaf_min:.1f}° to {unaf_max:.1f}°")
+                        
+                        with col2:
+                            st.markdown(f"**Affected Day {sample_affected['day']}**")
+                            st.write(f"Potential: {sample_affected['potential_kwh_m2']:.2f} kWh/m²")
+                            st.write(f"Loss: {sample_affected['loss_kwh_m2']:.2f} kWh/m² ({sample_affected['loss_percent']:.1f}%)")
+                            if af_min is not None:
+                                st.write(f"Sun azimuth range: {af_min:.1f}° to {af_max:.1f}°")
+                        
+                        # Show obstruction ranges
+                        st.markdown("### Your Obstructions")
+                        for i, obs in enumerate(st.session_state['obstructions']):
+                            st.write(f"**Obstruction {i+1}:** Azimuth {obs['az_left']:.0f}° to {obs['az_right']:.0f}°, Elevation {obs['elev']:.0f}°")
+                    
+                    # Show debug log
+                    if 'debug_log' in analytics and analytics['debug_log']:
+                        st.markdown("### Debug Log (First Few Days)")
+                        for log_entry in analytics['debug_log']:
+                            st.text(log_entry)
+                
+                # Total Annual Loss
+                st.subheader("Total Annual Loss")
+                col1, col2 = st.columns(2)
+                with col1:
+                    st.metric(
+                        label="Energy Lost to Shading",
+                        value=f"{analytics['total_loss_kwh_m2']:.1f} kWh/m²"
+                    )
+                with col2:
+                    st.metric(
+                        label="Percentage of Potential",
+                        value=f"{analytics['loss_percent']:.1f}%"
+                    )
+                
+                # Find worst and least affected days
+                daily_stats = analytics['daily_stats']
+                affected_days = [d for d in daily_stats if d['loss_kwh_m2'] > 0]
+                
+                if affected_days:
+                    worst_day = max(affected_days, key=lambda x: x['loss_percent'])
+                    least_affected = min(affected_days, key=lambda x: x['loss_percent'])
+                    
+                    # Find consecutive date ranges
+                    affected_day_nums = sorted([d['day'] for d in affected_days])
+                    date_ranges = []
+                    range_start = affected_day_nums[0]
+                    range_end = affected_day_nums[0]
+                    
+                    for i in range(1, len(affected_day_nums)):
+                        if affected_day_nums[i] == range_end + 1:
+                            range_end = affected_day_nums[i]
+                        else:
+                            date_ranges.append((range_start, range_end))
+                            range_start = affected_day_nums[i]
+                            range_end = affected_day_nums[i]
+                    date_ranges.append((range_start, range_end))
+                    
+                    # Convert day number to DD/MM format
+                    def day_to_date(day_num):
+                        # Simple approximation: assume 30.4 days per month
+                        month = int((day_num - 1) / 30.4) + 1
+                        day = int((day_num - 1) % 30.4) + 1
+                        if month > 12:
+                            month = 12
+                            day = 31
+                        return f"{day}/{month}"
+                    
+                    st.markdown("---")
+                    st.subheader("Most Impacted Days")
+                    
+                    # Stacked Bar Charts for Worst and Best Days
+                    import plotly.graph_objects as go
+                    
+                    # Calculate energy received
+                    worst_received = worst_day['potential_kwh_m2'] - worst_day['loss_kwh_m2']
+                    worst_received_pct = 100 - worst_day['loss_percent']
+                    
+                    least_received = least_affected['potential_kwh_m2'] - least_affected['loss_kwh_m2']
+                    least_received_pct = 100 - least_affected['loss_percent']
+                    
+                    fig_bars = go.Figure()
+                    
+                    # Worst Day - Energy Received (green)
+                    fig_bars.add_trace(go.Bar(
+                        name=f'Energy Received',
+                        y=[f'Worst Day<br>(Day {worst_day["day"]})', f'Least Affected<br>(Day {least_affected["day"]})'],
+                        x=[worst_received, least_received],
+                        orientation='h',
+                        marker=dict(color='rgba(76, 175, 80, 0.7)'),
+                        text=[f'{worst_received:.2f} kWh/m² ({worst_received_pct:.1f}%)',
+                              f'{least_received:.2f} kWh/m² ({least_received_pct:.1f}%)'],
+                        textposition='inside',
+                        textfont=dict(color='white', size=12),
+                        hovertemplate='<b>%{y}</b><br>Received: %{x:.2f} kWh/m²<extra></extra>'
+                    ))
+                    
+                    # Energy Lost (red/orange)
+                    fig_bars.add_trace(go.Bar(
+                        name=f'Energy Lost',
+                        y=[f'Worst Day<br>(Day {worst_day["day"]})', f'Least Affected<br>(Day {least_affected["day"]})'],
+                        x=[worst_day['loss_kwh_m2'], least_affected['loss_kwh_m2']],
+                        orientation='h',
+                        marker=dict(color='rgba(244, 67, 54, 0.7)'),
+                        text=[f'{worst_day["loss_kwh_m2"]:.2f} kWh/m² ({worst_day["loss_percent"]:.1f}%)',
+                              f'{least_affected["loss_kwh_m2"]:.2f} kWh/m² ({least_affected["loss_percent"]:.1f}%)'],
+                        textposition='inside',
+                        textfont=dict(color='white', size=12),
+                        hovertemplate='<b>%{y}</b><br>Lost: %{x:.2f} kWh/m²<extra></extra>'
+                    ))
+                    
+                    fig_bars.update_layout(
+                        barmode='stack',
+                        title="Energy Breakdown: Worst vs Least Affected Days",
+                        xaxis_title="Daily Energy (kWh/m²)",
+                        yaxis_title="",
+                        height=300,
+                        showlegend=True,
+                        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+                        margin=dict(l=20, r=20, t=60, b=40)
+                    )
+                    
+                    st.plotly_chart(fig_bars, use_container_width=True)
+                    
+                    # Affected Day Ranges with Gradient
+                    st.markdown("---")
+                    st.subheader("Affected Day Ranges")
+                    
+                    for start_day, end_day in date_ranges:
+                        start_date = day_to_date(start_day)
+                        end_date = day_to_date(end_day)
+                        
+                        if start_day == end_day:
+                            range_text = f"**{start_date}**"
+                        else:
+                            range_text = f"**{start_date} to {end_date}**"
+                        
+                        # Get stats for this range
+                        range_stats = [d for d in affected_days if start_day <= d['day'] <= end_day]
+                        min_loss = min(range_stats, key=lambda x: x['loss_percent'])
+                        max_loss = max(range_stats, key=lambda x: x['loss_percent'])
+                        
+                        st.markdown(f"### {range_text}")
+                        
+                        # Create gradient bar
+                        gradient_steps = 20
+                        gradient_html = '<div style="display: flex; height: 30px; border-radius: 5px; overflow: hidden; margin: 10px 0;">'
+                        
+                        for i in range(gradient_steps):
+                            # Interpolate from blue (least) to orange (most)
+                            t = i / (gradient_steps - 1)
+                            r = int(100 + 155 * t)  # 100 -> 255
+                            g = int(149 + 11 * t)   # 149 -> 160
+                            b = int(237 - 115 * t)  # 237 -> 122
+                            
+                            gradient_html += f'<div style="flex: 1; background-color: rgb({r}, {g}, {b});"></div>'
+                        
+                        gradient_html += '</div>'
+                        st.markdown(gradient_html, unsafe_allow_html=True)
+                        
+                        # Show range stats
+                        col1, col2, col3 = st.columns(3)
+                        with col1:
+                            st.metric("Days Affected", len(range_stats))
+                        with col2:
+                            st.metric("Min Loss", f"{min_loss['loss_percent']:.1f}%")
+                        with col3:
+                            st.metric("Max Loss", f"{max_loss['loss_percent']:.1f}%")
+                    
+                else:
+                    st.info("No shading detected. Your location has clear sky access year-round!")
+                    
             except Exception as e:
                 st.error(f"Could not render shadow map visualization: {e}")
 
