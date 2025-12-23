@@ -460,7 +460,7 @@ elif st.session_state['user_mode'] == 'Advanced':
     st.sidebar.button("🔄 Switch Mode", on_click=lambda: st.session_state.update({'user_mode': None}))
     
     # Shadow Map Visualization Function
-    def create_shadow_map_viz(obstructions, latitude, longitude=0):
+    def create_shadow_map_viz(obstructions, latitude, longitude=0, tracker_type='2-Axis', fixed_tilt=0, fixed_azimuth=0):
         """Create 3D hemisphere visualization of sky with obstacle shading"""
         import numpy as np
         import plotly.graph_objects as go
@@ -507,9 +507,8 @@ elif st.session_state['user_mode'] == 'Advanced':
         color_winter = 'rgb(100, 149, 237)' # CornflowerBlue
         color_summer = 'rgb(255, 160, 122)' # LightSalmon
         
-        # Add Dummy Trace for Gradient Legend
-        # Note: We need at least one point for the colorbar to show.
-        # We place it at the origin (z=0) and make it invisible (size=0, opacity=0).
+        # Add Dummy Trace for Solstice Gradient (used for gradient fill between solstices)
+        # Note: Colorbar removed as per user request - colors still used for sun path band
         fig.add_trace(go.Scatter3d(
             x=[0], y=[0], z=[0],
             mode='markers',
@@ -518,21 +517,9 @@ elif st.session_state['user_mode'] == 'Advanced':
                 colorscale=[[0, color_winter], [1, color_summer]],
                 cmin=val_winter,
                 cmax=val_summer,
-                showscale=True,
+                showscale=False,  # Hidden - no colorbar
                 size=0, # Invisible
-                opacity=0,
-                colorbar=dict(
-                    title=dict(text="Daily Insolation (kWh/m²)", side="top"),
-                    orientation="h", # Horizontal
-                    tickmode="array",
-                    tickvals=[val_winter, val_summer],
-                    ticktext=[f"{val_winter:.1f} (Winter)", f"{val_summer:.1f} (Summer)"],
-                    ticks="outside",
-                    x=0.5, # Center horizontally
-                    y=0.0, # Bottom
-                    len=0.4, # Reduced width
-                    thickness=10 # Reduced height
-                )
+                opacity=0
             ),
             showlegend=False,
             hoverinfo='skip'
@@ -885,41 +872,623 @@ elif st.session_state['user_mode'] == 'Advanced':
                     hovertemplate=f'{config["label"]}<br>Az: %{{x:.1f}}<br>El: %{{z:.1f}}<extra></extra>'
                 ))
 
-        # Draw Hatching (Gradient Curves connecting solstices at hourly intervals)
-        # Iterate hour angles from -180 to 180 every 15 degrees (1 hour)
-        for h in range(-180, 181, 15):
-            # Determine gradient colors based on which point is Summer/Winter
-            c1 = solstice_configs[0]["color"]  # +23.45
-            c2 = solstice_configs[1]["color"]  # -23.45
+        # 9. Sun Path Band Surface (Mesh3d)
+        # Generate a grid of points covering the annual sun path band
+        # Hour Angle: -120 to 120 (approx sunrise to sunset)
+        # Declination: -23.45 to +23.45
+        
+        h_range = np.linspace(-110, 110, 30) # Hour angles (avoiding extreme horizon)
+        d_range = np.linspace(-23.45, 23.45, 15) # Declinations
+        
+        H, D = np.meshgrid(h_range, d_range)
+        X, Y, Z = [], [], []
+        Intensity = [] # For coloring
+        Opacity = []   # For transparency
+        
+        # Pre-calculate Panel Normal Vector for Fixed Tilt
+        if tracker_type == 'Fixed Tilt':
+            # Convert to radians
+            beta = np.radians(fixed_tilt)
+            gamma = np.radians(fixed_azimuth)
             
-            # Interpolate along the curved path on the hemisphere
-            # Sample multiple declination values between +23.45 and -23.45
-            decl_samples = np.linspace(23.45, -23.45, 20)
+            # Panel Normal Vector (P)
+            # Px = sin(beta) * sin(gamma)
+            # Py = sin(beta) * cos(gamma)
+            # Pz = cos(beta)
+            Px = np.sin(beta) * np.sin(gamma)
+            Py = np.sin(beta) * np.cos(gamma)
+            Pz = np.cos(beta)
+        
+        # Flatten arrays for vertex processing
+        H_flat = H.flatten()
+        D_flat = D.flatten()
+        
+        for k in range(len(H_flat)):
+            h = H_flat[k]
+            d = D_flat[k]
             
-            x_curve, y_curve, z_curve, color_params = [], [], [], []
+            az, el = get_solar_position(latitude, d, h)
             
-            for i, decl in enumerate(decl_samples):
-                az, el = get_solar_position(latitude, decl, h)
+            # Clamp elevation to 0 for visualization (don't go below ground)
+            # But for AOI calc, use actual elevation? No, use clamped to avoid weird artifacts at horizon
+            el_viz = max(0, el)
+            
+            x, y, z = sph_to_cart(az, el_viz, r=0.95) # Slightly inside obstacle sphere
+            X.append(x)
+            Y.append(y)
+            Z.append(z)
+            
+            # Calculate AOI for coloring
+            if tracker_type == 'Horizontal':
+                # AOI = Zenith Angle = 90 - Elevation
+                aoi = 90 - el_viz
                 
-                if el > 0:  # Only include points above horizon
-                    x, y, z = sph_to_cart(az, el)
-                    x_curve.append(x)
-                    y_curve.append(y)
-                    z_curve.append(z)
-                    # Color parameter: 0 at summer solstice (+23.45), 1 at winter (-23.45)
-                    color_params.append(i / (len(decl_samples) - 1))
+                # Base Intensity = (1 - AOI/90)^1.5 (Geometric Efficiency)
+                base_intensity = max(0, (1.0 - (aoi / 90.0)) ** 1.5)
+                
+                # Power Weighting: Scale by sin(Elevation)
+                power_weight = np.sin(np.radians(max(0.1, el_viz)))
+                
+                intensity = base_intensity * power_weight
+                op = 0.1 + (intensity * 0.8) 
+                
+            elif tracker_type == 'Fixed Tilt':
+                # Sun Vector (S) is simply the normalized cartesian coordinates (x, y, z)
+                # Since r=0.95, we normalize back to 1
+                Sx, Sy, Sz = x/0.95, y/0.95, z/0.95
+                
+                # Cos(AOI) = Dot Product (S . P)
+                cos_aoi = Sx*Px + Sy*Py + Sz*Pz
+                
+                # Clamp to [-1, 1] for safety
+                cos_aoi = max(-1.0, min(1.0, cos_aoi))
+                
+                # AOI in degrees
+                aoi = np.degrees(np.arccos(cos_aoi))
+                
+                # Intensity mapping (same as Horizontal)
+                # If AOI > 90 (sun behind panel), intensity is 0
+                if aoi > 90:
+                    intensity = 0.0
+                    op = 0.1
+                else:
+                    # Power Weighting
+                    base_intensity = max(0, (1.0 - (aoi / 90.0)) ** 1.5)
+                    power_weight = np.sin(np.radians(max(0.1, el_viz)))
+                    intensity = base_intensity * power_weight
+                    op = 0.1 + (intensity * 0.8)
+
+            elif tracker_type == '1-Axis Azimuthal':
+                # 1-Axis Azimuthal: Azimuth follows sun, Tilt is fixed
+                # User Requirement: Lock Tilt to Latitude for standard comparison (matching simulation default)
+                # AOI depends only on Elevation and Tilt
+                # Ideal Elevation = 90 - Tilt
+                
+                azim_tilt = abs(latitude)
+                ideal_el = 90 - azim_tilt
+                aoi = abs(ideal_el - el_viz)
+                
+                # Intensity mapping
+                base_intensity = max(0, (1.0 - (aoi / 90.0)) ** 1.5)
+                power_weight = np.sin(np.radians(max(0.1, el_viz)))
+                intensity = base_intensity * power_weight
+                op = 0.1 + (intensity * 0.8)
+                
+            elif tracker_type == '1-Axis Horizontal':
+                # ... (existing Horizontal logic - unchanged) ...
+                # Normalize inputs (r=0.95 in viz)
+                Sx, Sy, Sz = x/0.95, y/0.95, z/0.95
+                
+                # Check for validity (1 - y^2 must be >= 0)
+                term = max(0, 1.0 - Sy**2)
+                cos_aoi = np.sqrt(term)
+                aoi = np.degrees(np.arccos(cos_aoi))
+                
+                # Intensity mapping
+                base_intensity = max(0, (1.0 - (aoi / 90.0)) ** 1.5)
+                power_weight = np.sin(np.radians(max(0.1, el_viz)))
+                intensity = base_intensity * power_weight
+                op = 0.1 + (intensity * 0.8)
+
+            elif tracker_type == '1-Axis Polar':
+                # ... (existing Polar logic - unchanged) ...
+                # 1. Define Axis Properties
+                if latitude < 0:
+                    axis_az = 180
+                    panel_az_noon = 0
+                else:
+                    axis_az = 0
+                    panel_az_noon = 180
+                
+                axis_tilt = abs(latitude)
+                
+                # ... (rotation logic unchanged) ...
+                # 2. Calculate Axis Vector k
+                az_rad_k = np.radians(axis_az)
+                tilt_rad_k = np.radians(axis_tilt)
+                k_x = np.cos(tilt_rad_k) * np.sin(az_rad_k)
+                k_y = np.cos(tilt_rad_k) * np.cos(az_rad_k)
+                k_z = np.sin(tilt_rad_k)
+                
+                # 3. Calculate Noon Normal Vector n0
+                az_rad_n0 = np.radians(panel_az_noon)
+                tilt_rad_n0 = np.pi/2 - tilt_rad_k
+                n0_x = np.cos(tilt_rad_n0) * np.sin(az_rad_n0)
+                n0_y = np.cos(tilt_rad_n0) * np.cos(az_rad_n0)
+                n0_z = np.sin(tilt_rad_n0)
+                
+                # 4. Determine Rotation Angle rho based on Hour Angle h (from loop)
+                omega_rad = np.radians(h)
+                
+                if k_y >= 0: 
+                    rho_rad = omega_rad
+                else:       
+                    rho_rad = -omega_rad
+                
+                # 5. Rotate n0 around k to get Panel Normal P
+                v_cross_x = k_y * n0_z - k_z * n0_y
+                v_cross_y = k_z * n0_x - k_x * n0_z
+                v_cross_z = k_x * n0_y - k_y * n0_x
+                
+                Px = n0_x * np.cos(rho_rad) + v_cross_x * np.sin(rho_rad)
+                Py = n0_y * np.cos(rho_rad) + v_cross_y * np.sin(rho_rad)
+                Pz = n0_z * np.cos(rho_rad) + v_cross_z * np.sin(rho_rad)
+                
+                # 6. Calculate AOI
+                Sx, Sy, Sz = x/0.95, y/0.95, z/0.95
+                cos_aoi = Sx*Px + Sy*Py + Sz*Pz
+                cos_aoi = max(-1.0, min(1.0, cos_aoi))
+                aoi = np.degrees(np.arccos(cos_aoi))
+                # Intensity mapping
+                # Base Intensity = (1 - AOI/90)^1.5 (Geometric Efficiency)
+                base_intensity = max(0, (1.0 - (aoi / 90.0)) ** 1.5)
+                
+                # Power Weighting: Scale by sin(Elevation) to represent atmospheric potential
+                # Low elevation = Low power = Darker
+                # High elevation = High power = Brighter
+                # Ensure el_viz > 0 to avoid errors (it is clamped to 0 already)
+                power_weight = np.sin(np.radians(max(0.1, el_viz)))
+                
+                intensity = base_intensity * power_weight
+                op = 0.1 + (intensity * 0.8) # Allow slightly higher max opacity (0.9) for brilliance
+
+            elif viz_tracker_type == '1-Axis Elevation':
+                # 1-Axis Elevation: Axis is East-West. Panel rotates North-South.
+                # Mode in solar_model.py: "Panel tilt tracks the complement of elevation angle"
+                # This implies Normal Elevation = Sun Elevation.
+                # Normal Azimuth = 0 (North) or 180 (South) based on Latitude.
+                
+                # Determine Normal Azimuth (North or South)
+                # Simplified: SH -> North (0), NH -> South (180)
+                # Note: Tropics logic is complex, but for visualization picking the primary direction is safer.
+                if latitude < 0:
+                    # Southern Hemisphere -> Face North
+                    ny_sign = 1.0 
+                else:
+                    # Northern Hemisphere -> Face South
+                    ny_sign = -1.0
+                
+                # Normalize inputs
+                Sx, Sy, Sz = x/0.95, y/0.95, z/0.95
+                
+                # Normal Vector N
+                # Nz = Sz (Matches elevation)
+                # Ny = sqrt(1 - Sz^2) * sign (In Y-Z plane)
+                # Nx = 0
+                
+                # Avoid domain error for sqrt
+                term = max(0, 1.0 - Sz**2)
+                Ny = np.sqrt(term) * ny_sign
+                Nz = Sz
+                
+                # Cos(AOI) = S . N = Sx*0 + Sy*Ny + Sz*Nz
+                cos_aoi = Sy * Ny + Sz * Nz
+                
+                # Clamp
+                cos_aoi = max(-1.0, min(1.0, cos_aoi))
+                aoi = np.degrees(np.arccos(cos_aoi))
+                
+                # Intensity mapping
+                base_intensity = max(0, (1.0 - (aoi / 90.0)) ** 1.5)
+                power_weight = np.sin(np.radians(max(0.1, el_viz)))
+                intensity = base_intensity * power_weight
+                op = 0.1 + (intensity * 0.8)
+
+            else:
+                # 2-Axis: Always pointing at sun
+                intensity = 1.0 * np.sin(np.radians(max(0.1, el_viz)))
+                op = 0.1 + (intensity * 0.8)
             
-            # Draw the curved line if we have at least 2 points
-            if len(x_curve) >= 2:
+            Intensity.append(intensity)
+            Opacity.append(op)
+            
+        # Create triangles for mesh
+        # Grid dimensions: rows = len(d_range), cols = len(h_range)
+        rows = len(d_range)
+        cols = len(h_range)
+        
+        i_indices = []
+        j_indices = []
+        k_indices = []
+        
+        for r in range(rows - 1):
+            for c in range(cols - 1):
+                # Vertex indices
+                v00 = r * cols + c
+                v01 = r * cols + (c + 1)
+                v10 = (r + 1) * cols + c
+                v11 = (r + 1) * cols + (c + 1)
+                
+                # Triangle 1 (v00, v01, v10)
+                i_indices.append(v00)
+                j_indices.append(v01)
+                k_indices.append(v10)
+                
+                # Triangle 2 (v01, v11, v10)
+                i_indices.append(v01)
+                j_indices.append(v11)
+                k_indices.append(v10)
+        
+        # Create Mesh3d trace
+        vertex_colors = []
+        for idx, val in enumerate(Intensity):
+            # Map intensity to color (Yellow -> Red)
+            # Yellow: (255, 255, 0), Red: (255, 0, 0)
+            g = int(255 * val)
+            a = Opacity[idx]
+            vertex_colors.append(f'rgba(255, {g}, 0, {a})')
+            
+        fig.add_trace(go.Mesh3d(
+            x=X, y=Y, z=Z,
+            i=i_indices, j=j_indices, k=k_indices,
+            vertexcolor=vertex_colors,
+            name='Sun Path Band',
+            hoverinfo='skip',
+            showlegend=False
+        ))
+
+        # Add AOI Legend (Dummy Trace) - Show for both types for uniformity
+        # Max irradiance from solar_model.py: A=1235 W/m², DNI~1074 W/m² + diffuse~145 = ~1.2 kW/m² peak
+        max_irradiance_kw = 1.2  # kW/m² at summer solstice zenith
+        min_irradiance_kw = 0.0  # kW/m² (normalized to 0 for clean scale)
+        
+        # Calculate 6 irradiance increments (0%, 20%, 40%, 60%, 80%, 100%)
+        irr_vals = [min_irradiance_kw + (max_irradiance_kw - min_irradiance_kw) * i / 5 for i in range(6)]
+        
+        # Colorbar positioning
+        bar_x = 0.5
+        bar_y = 0.07  # Position for colorbar (moved down more)
+        bar_len = 0.65
+        
+        fig.add_trace(go.Scatter3d(
+            x=[0], y=[0], z=[0],
+            mode='markers',
+            marker=dict(
+                color=[0, 100], # Range 0 to 100%
+                colorscale=[[0, 'rgb(255, 0, 0)'], [1, 'rgb(255, 255, 0)']], # Red (0%) to Yellow (100%)
+                cmin=0,
+                cmax=100,
+                showscale=True,
+                size=0,
+                opacity=0,
+                colorbar=dict(
+                    # Title moved to separate annotation for precise positioning
+                    orientation="h",
+                    x=bar_x,
+                    y=bar_y,
+                    len=bar_len,
+                    thickness=20,
+                    tickmode="array",
+                    tickvals=[0, 20, 40, 60, 80, 100],
+                    ticktext=[f"{v:.2f}" for v in irr_vals],
+                    ticks="outside",
+                    ticklen=6,
+                    tickfont=dict(size=12),
+                    ypad=25,  # Extra padding to push title higher
+                )
+            ),
+            showlegend=False,
+            hoverinfo='skip'
+        ))
+        
+        # Add individual % annotations above the colorbar, aligned with tick positions
+        pct_values = [0, 20, 40, 60, 80, 100]
+        for i, pct in enumerate(pct_values):
+            # Calculate x position (0.97*bar_len for alignment with tick marks)
+            pct_span = bar_len * 0.97  # Slightly narrower than bar for alignment
+            x_start = bar_x - pct_span/2
+            x_pos = x_start + (pct_span * i / 5)
+            fig.add_annotation(
+                text=f"<b>{pct}%</b>",
+                x=x_pos,
+                y=bar_y + 0.11,  # Higher above the colorbar and title
+                xref="paper",
+                yref="paper",
+                showarrow=False,
+                font=dict(size=12, color="white"),
+                xanchor="center"
+            )
+        
+        # Add "Incident Irradiance (kW/m²)" label below the colorbar
+        fig.add_annotation(
+            text="<b>Incident Irradiance (kW/m²)</b>",
+            x=0.5,
+            y=bar_y - 0.015,  # Closer below the tick labels
+            xref="paper",
+            yref="paper",
+            showarrow=False,
+            font=dict(size=13, color="white"),
+            xanchor="center"
+        )
+        
+        # Add "Relative Power Potential" title as separate annotation (above % row)
+        fig.add_annotation(
+            text="<b>Relative Power Potential</b>",
+            x=0.5,
+            y=bar_y + 0.14,  # Above the percentage row
+            xref="paper",
+            yref="paper",
+            showarrow=False,
+            font=dict(size=14, color="white"),
+            xanchor="center"
+        )
+        
+
+
+    # 10. Visual Guides (Cone of Acceptance, etc.)
+        if viz_tracker_type == 'Horizontal':
+            # Cone of Acceptance (AOI = 55 deg -> Elevation = 35 deg)
+            el_cone = 35
+            theta_cone = np.linspace(0, 2*np.pi, 100)
+            x_cone, y_cone, z_cone = [], [], []
+            for az in np.degrees(theta_cone):
+                x, y, z = sph_to_cart(az, el_cone)
+                x_cone.append(x)
+                y_cone.append(y)
+                z_cone.append(z)
+            
+            fig.add_trace(go.Scatter3d(
+                x=x_cone, y=y_cone, z=z_cone,
+                mode='lines',
+                line=dict(color='white', width=4, dash='dot'),
+                name='AOI 55° Limit',
+                hoverinfo='name'
+            ))
+
+            # NEW: Draw Panel Normal (Vertical Up)
+            fig.add_trace(go.Scatter3d(
+                x=[0, 0], y=[0, 0], z=[0, 0.5],
+                mode='lines+markers',
+                line=dict(color='red', width=5),
+                marker=dict(size=5, color='red'),
+                name='Panel Normal',
+                hoverinfo='name'
+            ))
+            fig.add_trace(go.Cone(
+                x=[0], y=[0], z=[0.5],
+                u=[0], v=[0], w=[0.2],
+                colorscale=[[0, 'red'], [1, 'red']],
+                showscale=False,
+                sizemode='absolute',
+                sizeref=0.1,
+                name='Panel Normal',
+                showlegend=False
+            ))
+            
+        elif viz_tracker_type == 'Fixed Tilt':
+            # Draw Panel Normal Vector
+            scale = 0.5
+            x_norm = Px * scale
+            y_norm = Py * scale
+            z_norm = Pz * scale
+            
+            fig.add_trace(go.Scatter3d(
+                x=[0, x_norm], y=[0, y_norm], z=[0, z_norm],
+                mode='lines+markers',
+                line=dict(color='red', width=5),
+                marker=dict(size=5, color='red'),
+                name='Panel Normal',
+                hoverinfo='name'
+            ))
+            fig.add_trace(go.Cone(
+                x=[x_norm], y=[y_norm], z=[z_norm],
+                u=[Px*0.2], v=[Py*0.2], w=[Pz*0.2],
+                colorscale=[[0, 'red'], [1, 'red']],
+                showscale=False,
+                sizemode='absolute',
+                sizeref=0.1,
+                name='Panel Normal',
+                showlegend=False
+            ))
+            
+        elif viz_tracker_type == '1-Axis Azimuthal':
+            # Draw Tracker Path Ring (El = 90 - Tilt)
+            ideal_el = 90 - abs(latitude) # Locked to Latitude
+            
+            # Determine Azimuth Range (Truncate where Sun never goes)
+            x_ring, y_ring, z_ring = [], [], []
+            
+            if abs(latitude) < 23.45:
+                # Tropics: Sun goes full 360 (North and South)
+                theta_ring = np.linspace(0, 2*np.pi, 200)
+                for az in np.degrees(theta_ring):
+                    x, y, z = sph_to_cart(az, ideal_el)
+                    x_ring.append(x)
+                    y_ring.append(y)
+                    z_ring.append(z)
+            else:
+                # Non-Tropics: Sun is confined to one sector
+                # Use Hour Angle sweep to guarantee correct sector (Noon-containing)
+                decl_summer = 23.45 if latitude > 0 else -23.45
+                
+                # Calculate Sunset Hour Angle for Summer Solstice
+                lat_rad = np.radians(latitude)
+                dec_rad = np.radians(decl_summer)
+                tan_prod = -np.tan(lat_rad) * np.tan(dec_rad)
+                
+                if tan_prod > 1: h_ss = 0
+                elif tan_prod < -1: h_ss = 180
+                else: h_ss = np.degrees(np.arccos(tan_prod))
+                
+                # Sweep from sunrise to sunset (plus buffer)
+                # This automatically handles the "direction" (E->N->W or E->S->W) correctly
+                h_buffer = 0 # Stop exactly at horizon (no buffer)
+                hours = np.linspace(-h_ss - h_buffer, h_ss + h_buffer, 200)
+                
+                for h in hours:
+                    # Get standard solar azimuth for this time
+                    az, _ = get_solar_position(latitude, decl_summer, h)
+                    
+                    # Plot the point at this Azimuth, but fixed Optimal Elevation
+                    x, y, z = sph_to_cart(az, ideal_el)
+                    x_ring.append(x)
+                    y_ring.append(y)
+                    z_ring.append(z)
+            
+            fig.add_trace(go.Scatter3d(
+                x=x_ring, y=y_ring, z=z_ring,
+                mode='lines',
+                line=dict(color='white', width=4, dash='longdash'),
+                name=f'Tracker Path (El = {ideal_el:.0f}°)',
+                hoverinfo='name'
+            ))
+            
+        elif viz_tracker_type == '1-Axis Horizontal':
+            # Draw Prime Vertical Arc (East -> Zenith -> West)
+            el_range = np.linspace(0, 90, 50)
+            x_arc, y_arc, z_arc = [], [], []
+            # East leg
+            for el in el_range:
+                x, y, z = sph_to_cart(90, el)
+                x_arc.append(x)
+                y_arc.append(y)
+                z_arc.append(z)
+            # West leg (reversed El)
+            for el in reversed(el_range[:-1]): 
+                x, y, z = sph_to_cart(270, el)
+                x_arc.append(x)
+                y_arc.append(y)
+                z_arc.append(z)
+                
+            fig.add_trace(go.Scatter3d(
+                x=x_arc, y=y_arc, z=z_arc,
+                mode='lines',
+                line=dict(color='white', width=4, dash='longdash'),
+                name='Tracker Path (Prime Vertical)',
+                hoverinfo='name'
+            ))
+            
+        elif viz_tracker_type == '1-Axis Polar':
+            # Draw Great Circle representing Panel Normal Path
+            if latitude < 0:
+                axis_az = 180
+                panel_az_noon = 0
+            else:
+                axis_az = 0
+                panel_az_noon = 180
+            axis_tilt = abs(latitude)
+            az_rad_k = np.radians(axis_az)
+            tilt_rad_k = np.radians(axis_tilt)
+            k_x = np.cos(tilt_rad_k) * np.sin(az_rad_k)
+            k_y = np.cos(tilt_rad_k) * np.cos(az_rad_k)
+            k_z = np.sin(tilt_rad_k)
+            az_rad_n0 = np.radians(panel_az_noon)
+            tilt_rad_n0 = np.pi/2 - tilt_rad_k
+            n0_x = np.cos(tilt_rad_n0) * np.sin(az_rad_n0)
+            n0_y = np.cos(tilt_rad_n0) * np.cos(az_rad_n0)
+            n0_z = np.sin(tilt_rad_n0)
+            thetas = np.linspace(-np.pi, np.pi, 100)
+            x_circ, y_circ, z_circ = [], [], []
+            v_cross_x = k_y * n0_z - k_z * n0_y
+            v_cross_y = k_z * n0_x - k_x * n0_z
+            v_cross_z = k_x * n0_y - k_y * n0_x
+            for theta in thetas:
+                px = n0_x * np.cos(theta) + v_cross_x * np.sin(theta)
+                py = n0_y * np.cos(theta) + v_cross_y * np.sin(theta)
+                pz = n0_z * np.cos(theta) + v_cross_z * np.sin(theta)
+                if pz >= -0.05: 
+                    x_circ.append(px)
+                    y_circ.append(py)
+                    z_circ.append(pz)
+            fig.add_trace(go.Scatter3d(
+                x=x_circ, y=y_circ, z=z_circ,
+                mode='lines',
+                line=dict(color='white', width=4, dash='longdash'),
+                name=f'Tracker Path (Polar Axis)',
+                hoverinfo='name'
+            ))
+            
+        elif viz_tracker_type == '1-Axis Elevation':
+            # Draw Prime Meridian Arc (North -> Zenith -> South)
+            # Truncated between Solstice Noon Elevations (Effective Meridian Tracking Range)
+            
+            decl_summer = 23.45
+            decl_winter = -23.45
+            
+            # Calculate Noon Elevation for both solstices
+            el_1 = 90 - abs(latitude - decl_summer)
+            el_2 = 90 - abs(latitude - decl_winter)
+            
+            min_el = min(el_1, el_2)
+            max_el = max(el_1, el_2)
+            
+            # If in tropics, max elevation reaches 90
+            if abs(latitude) < 23.45:
+                max_el = 90
+            
+            # Clamp range
+            min_el = max(0, min_el)
+            max_el = min(90, max_el)
+            
+            el_range = np.linspace(min_el, max_el, 50)
+            x_arc, y_arc, z_arc = [], [], []
+            
+            # Determine Azimuth based on Hemisphere
+            face_az = 0 if latitude < 0 else 180
+            
+            for el in el_range:
+                x, y, z = sph_to_cart(face_az, el)
+                x_arc.append(x)
+                y_arc.append(y)
+                z_arc.append(z)
+            
+            fig.add_trace(go.Scatter3d(
+                x=x_arc, y=y_arc, z=z_arc,
+                mode='lines',
+                line=dict(color='white', width=4, dash='longdash'),
+                name=f'Tracker Path ({min_el:.0f}°-{max_el:.0f}° El)',
+                hoverinfo='name'
+            ))
+
+        # 10. Hour Labels (Text Markers)
+        # Add labels at 8, 10, 12, 14, 16 hours for Solstices and Equinox
+        label_hours = [-60, -30, 0, 30, 60] 
+        # Corrected Mapping based on User Feedback:
+        # h=-60 ends up West (16h), h=+60 ends up East (8h)? 
+        # Or simply strictly map them to where they appear.
+        # User saw "8h" at West, so h=-60 is West -> 16h.
+        # User saw "16h" at East, so h=+60 is East -> 8h.
+        label_texts = ["16h", "14h", "12h", "10h", "8h"]
+        
+        label_decls = [-23.45, 0, 23.45] # Winter, Equinox, Summer
+        
+        for decl in label_decls:
+            x_lbl, y_lbl, z_lbl, t_lbl = [], [], [], []
+            for h_deg, text in zip(label_hours, label_texts):
+                az, el = get_solar_position(latitude, decl, h_deg)
+                if el > 0:
+                    x, y, z = sph_to_cart(az, el, r=1.05) # Slightly above band
+                    x_lbl.append(x)
+                    y_lbl.append(y)
+                    z_lbl.append(z)
+                    t_lbl.append(text)
+            
+            if x_lbl:
                 fig.add_trace(go.Scatter3d(
-                    x=x_curve, y=y_curve, z=z_curve,
-                    mode='lines',
-                    line=dict(
-                        width=2,
-                        color=color_params,
-                        colorscale=[[0, c1], [1, c2]],
-                        showscale=False
-                    ),
+                    x=x_lbl, y=y_lbl, z=z_lbl,
+                    mode='text',
+                    text=t_lbl,
+                    textfont=dict(color='white', size=10),
                     showlegend=False,
                     hoverinfo='skip'
                 ))
@@ -936,12 +1505,12 @@ elif st.session_state['user_mode'] == 'Advanced':
             scene=dict(
                 xaxis=dict(visible=False, range=[-1.2, 1.2]),
                 yaxis=dict(visible=False, range=[-1.2, 1.2]),
-                zaxis=dict(visible=False, range=[-0.3, 1.3]),  # Raised range
+                zaxis=dict(visible=False, range=[-1.2, 1.2]),  # Equal range for isometric view
                 camera=dict(
                     eye=camera_eye,  # Dynamic based on hemisphere
-                    center=dict(x=0, y=0, z=-0.2)  # Look slightly BELOW origin to move diagram UP
+                    center=dict(x=0, y=0, z=0)  # Center at origin
                 ),
-                aspectmode='data',
+                aspectmode='cube', # Force equal axis scaling
                 bgcolor='rgb(50, 50, 50)'
             ),
             showlegend=True,
@@ -949,7 +1518,7 @@ elif st.session_state['user_mode'] == 'Advanced':
             margin=dict(l=0, r=0, t=40, b=0),
             paper_bgcolor='rgb(50, 50, 50)'
         )
-        
+
         return fig
     
     # Title and Intro
@@ -1001,6 +1570,14 @@ elif st.session_state['user_mode'] == 'Advanced':
             guidance = "📍 **Equatorial latitude**: Sun crosses both hemispheres. Check obstacles in **all directions**"
         
         st.sidebar.info(guidance)
+        
+        # Tracker Type Selector for Visualization
+        viz_tracker_type = st.sidebar.selectbox(
+            "Visualization Tracker Type",
+            options=["2-Axis", "Horizontal", "Fixed Tilt", "1-Axis Azimuthal", "1-Axis Horizontal", "1-Axis Polar", "1-Axis Elevation"],
+            index=0,
+            help="Choose how the sun path opacity is rendered. '2-Axis' shows full brightness. Others fade based on Angle of Incidence."
+        )
         
         # Display current obstacles
         if len(st.session_state['obstructions']) > 0:
@@ -1074,6 +1651,18 @@ elif st.session_state['user_mode'] == 'Advanced':
         value=False,
         help="When checked, optimal tilt maximizes electrical yield by accounting for both temperature effects and AOI (Angle of Incidence - the angle between sunlight and the panel normal). When unchecked, it optimizes purely for AOI to minimize reflection losses and maximize incident irradiance, ignoring thermal effects."
     )
+    
+    # Check if obstructions have changed since last simulation
+    if st.session_state.get('run_simulation', False):
+        current_obstructions = st.session_state.get('obstructions', []) if st.session_state.get('enable_shading', False) else []
+        current_hash = hash(str(current_obstructions))  # Always calculate hash, even for empty list
+        last_hash = st.session_state.get('sim_obstruction_hash')
+        
+        # Show warning only if hashes exist and differ
+        if last_hash is not None and current_hash != last_hash:
+            st.sidebar.warning("⚠️ Shading settings changed. Results may be outdated.")
+    
+    
     if st.sidebar.button("Run Simulation", type="primary"):
         with st.spinner("Calculating annual profile..."):
             # Initialize Model
@@ -1089,14 +1678,24 @@ elif st.session_state['user_mode'] == 'Advanced':
             st.session_state['optimize_electrical'] = optimize_electrical
             
             # Generate Profile with Optimal Tilt (ALWAYS at 5-minute resolution for smooth graphs)
+            # Pass obstructions if shading is enabled
+            obstructions_to_use = st.session_state.get('obstructions', []) if st.session_state.get('enable_shading', False) else None
+            
             df_hourly, totals = model.generate_annual_profile(
                 fixed_tilt=fixed_tilt, 
                 fixed_azimuth=fixed_azimuth, 
                 efficiency=efficiency_percent/100.0,
                 optimal_tilt=optimal_tilt,
                 optimize_electrical=optimize_electrical,
-                time_step_minutes=5  # Always use 5-minute resolution for best graphs
+                time_step_minutes=5,  # Always use 5-minute resolution for best graphs
+                obstructions=obstructions_to_use
             )
+            
+            # Store obstruction hash for change detection
+            if obstructions_to_use:
+                st.session_state['sim_obstruction_hash'] = hash(str(obstructions_to_use))
+            else:
+                st.session_state['sim_obstruction_hash'] = None
             
             # Store results in session state
             st.session_state['totals'] = totals
@@ -1107,10 +1706,32 @@ elif st.session_state['user_mode'] == 'Advanced':
     if not st.session_state.get('run_simulation', False):
         if st.session_state.get('enable_shading', False) and len(st.session_state.get('obstructions', [])) > 0:
             st.header("🌳 Sky Hemisphere - Obstruction Map")
-            st.markdown("**Preview of obstacles that will block direct sunlight during simulation**")
+            st.markdown(f"**Visualizing for: {viz_tracker_type} Tracker**")
+            
+            if viz_tracker_type == 'Horizontal':
+                 st.markdown("Color/Opacity = **Relative Power**. **Dot Line** = 55° Limit.")
+            elif viz_tracker_type == 'Fixed Tilt':
+                 st.markdown(f"Color/Opacity = **Relative Power** (Tilt: {fixed_tilt}°, Az: {fixed_azimuth}°). **Red Arrow** = Normal.")
+            elif viz_tracker_type == '1-Axis Azimuthal':
+                 st.markdown(f"Color/Opacity = **Relative Power** (Locked Tilt: {abs(latitude):.1f}°). **Dash Line** = Optimal El.")
+            elif viz_tracker_type == '1-Axis Horizontal':
+                 st.markdown("Color/Opacity = **Relative Power** (N-S Axis). **Dash Line** = Optimal Path.")
+            elif viz_tracker_type == '1-Axis Polar':
+                 st.markdown(f"Color/Opacity = **Relative Power** (Polar Axis). **Dash Line** = Optimal Path.")
+            elif viz_tracker_type == '1-Axis Elevation':
+                 st.markdown("Color/Opacity = **Relative Power** (E-W Axis). **Dash Line** = Prime Meridian Path.")
+            else:
+                 st.markdown("2-Axis: Color/Opacity = **Relative Power** (Only Elevation dependent).")
             
             try:
-                fig = create_shadow_map_viz(st.session_state['obstructions'], latitude, longitude)
+                fig = create_shadow_map_viz(
+                    st.session_state['obstructions'], 
+                    latitude, 
+                    longitude, 
+                    tracker_type=viz_tracker_type,
+                    fixed_tilt=fixed_tilt,
+                    fixed_azimuth=fixed_azimuth
+                )
                 st.plotly_chart(fig, use_container_width=True)
                 
                 st.info(f"""
@@ -1985,12 +2606,21 @@ elif st.session_state['user_mode'] == 'Advanced':
             'Annual_Loss_Ang_1Axis_Horizontal_kWh_m2',
             'Annual_Loss_Ang_1Axis_El_kWh_m2', 'Annual_Loss_Ang_2Axis_kWh_m2'
         ]
+        loss_shading_keys = [
+            'Annual_Loss_Shading_Horizontal_kWh_m2', 'Annual_Loss_Shading_Fixed_kWh_m2',
+            'Annual_Loss_Shading_Fixed_EW_kWh_m2', 'Annual_Loss_Shading_Fixed_NS_kWh_m2',
+            'Annual_Loss_Shading_1Axis_Azimuth_kWh_m2', 'Annual_Loss_Shading_1Axis_Polar_kWh_m2',
+            'Annual_Loss_Shading_1Axis_Horizontal_kWh_m2',
+            'Annual_Loss_Shading_1Axis_Elevation_kWh_m2', 'Annual_Loss_Shading_2Axis_kWh_m2'
+        ]
         
         therm_losses = [totals.get(k, 0) for k in loss_therm_keys]
         ang_losses = [totals.get(k, 0) for k in loss_ang_keys]
+        shading_losses = [totals.get(k, 0) for k in loss_shading_keys]
         
         fig_loss = go.Figure()
         fig_loss.add_trace(go.Bar(name='Useful Energy', x=modes, y=yields, marker_color='#2ecc71'))
+        fig_loss.add_trace(go.Bar(name='Shading Loss', x=modes, y=shading_losses, marker_color='#3498db'))
         fig_loss.add_trace(go.Bar(name='Thermal Loss', x=modes, y=therm_losses, marker_color='#e74c3c'))
         fig_loss.add_trace(go.Bar(name='Angular Loss', x=modes, y=ang_losses, marker_color='#f1c40f'))
         
@@ -2003,20 +2633,26 @@ elif st.session_state['user_mode'] == 'Advanced':
         st.markdown("Legend shows: **Category (Absolute Value)**")
         
         # Helper to create pie chart with detailed legend
-        def create_pie_chart(title, key_I, key_Ang, key_Therm, key_Yield):
+        def create_pie_chart(title, key_I, key_Ang, key_Therm, key_Shading, key_Yield):
             if key_I not in totals:
                 return None
                 
             I = totals[key_I]
             Ang = totals[key_Ang]
             Therm = totals[key_Therm]
+            Shading = totals.get(key_Shading, 0)
             Yld = totals[key_Yield]
-            Conv = I - Ang - Therm - Yld
+            
+            # Total Available = I (incident) + Shading (lost before incidence)
+            # Actually, I in totals is usually the incident irradiance.
+            # If we want to show shading as a loss, we should add it to the total pie.
+            Total_Available = I + Shading
+            Conv = Total_Available - Shading - Ang - Therm - Yld
             
             # Base values and labels
-            values = [Yld, Therm, Ang, Conv]
-            base_labels = ['Useful Power', 'Thermal Loss', 'Angular Loss', 'Conversion Loss']
-            colors = ['#2ecc71', '#e74c3c', '#f1c40f', '#95a5a6'] # Green, Red, Yellow, Grey
+            values = [Yld, Shading, Therm, Ang, Conv]
+            base_labels = ['Useful Power', 'Shading Loss', 'Thermal Loss', 'Angular Loss', 'Conversion Loss']
+            colors = ['#2ecc71', '#3498db', '#e74c3c', '#f1c40f', '#95a5a6'] # Green, Blue, Red, Yellow, Grey
             
             # Create labels with values for the legend
             legend_labels = [f"{label} ({val:.1f} kWh/m²)" for label, val in zip(base_labels, values)]
@@ -2046,15 +2682,15 @@ elif st.session_state['user_mode'] == 'Advanced':
 
         # Create Grid Layout (4 rows of 2)
         pie_configs = [
-            ('Horizontal', 'Annual_I_Horizontal_kWh_m2', 'Annual_Loss_Ang_Horiz_kWh_m2', 'Annual_Loss_Therm_Horiz_kWh_m2', 'Annual_Yield_Horizontal_kWh_m2'),
-            ('Fixed Custom', 'Annual_I_Fixed_kWh_m2', 'Annual_Loss_Ang_Fixed_kWh_m2', 'Annual_Loss_Therm_Fixed_kWh_m2', 'Annual_Yield_Fixed_kWh_m2'),
-            ('Fixed E-W', 'Annual_I_Fixed_EW_kWh_m2', 'Annual_Loss_Ang_Fixed_EW_kWh_m2', 'Annual_Loss_Therm_Fixed_EW_kWh_m2', 'Annual_Yield_Fixed_EW_kWh_m2'),
-            ('Fixed N-S', 'Annual_I_Fixed_NS_kWh_m2', 'Annual_Loss_Ang_Fixed_NS_kWh_m2', 'Annual_Loss_Therm_Fixed_NS_kWh_m2', 'Annual_Yield_Fixed_NS_kWh_m2'),
-            ('1-Axis Azimuth', 'Annual_I_1Axis_Azimuth_kWh_m2', 'Annual_Loss_Ang_1Axis_Az_kWh_m2', 'Annual_Loss_Therm_1Axis_Az_kWh_m2', 'Annual_Yield_1Axis_Azimuth_kWh_m2'),
-            ('1-Axis Polar', 'Annual_I_1Axis_Polar_kWh_m2', 'Annual_Loss_Ang_1Axis_Polar_kWh_m2', 'Annual_Loss_Therm_1Axis_Polar_kWh_m2', 'Annual_Yield_1Axis_Polar_kWh_m2'),
-            ('1-Axis Horizontal', 'Annual_I_1Axis_Horizontal_kWh_m2', 'Annual_Loss_Ang_1Axis_Horizontal_kWh_m2', 'Annual_Loss_Therm_1Axis_Horizontal_kWh_m2', 'Annual_Yield_1Axis_Horizontal_kWh_m2'),
-            ('1-Axis Elevation', 'Annual_I_1Axis_Elevation_kWh_m2', 'Annual_Loss_Ang_1Axis_El_kWh_m2', 'Annual_Loss_Therm_1Axis_El_kWh_m2', 'Annual_Yield_1Axis_Elevation_kWh_m2'),
-            ('2-Axis', 'Annual_I_2Axis_kWh_m2', 'Annual_Loss_Ang_2Axis_kWh_m2', 'Annual_Loss_Therm_2Axis_kWh_m2', 'Annual_Yield_2Axis_kWh_m2')
+            ('Horizontal', 'Annual_I_Horizontal_kWh_m2', 'Annual_Loss_Ang_Horiz_kWh_m2', 'Annual_Loss_Therm_Horiz_kWh_m2', 'Annual_Loss_Shading_Horizontal_kWh_m2', 'Annual_Yield_Horizontal_kWh_m2'),
+            ('Fixed Custom', 'Annual_I_Fixed_kWh_m2', 'Annual_Loss_Ang_Fixed_kWh_m2', 'Annual_Loss_Therm_Fixed_kWh_m2', 'Annual_Loss_Shading_Fixed_kWh_m2', 'Annual_Yield_Fixed_kWh_m2'),
+            ('Fixed E-W', 'Annual_I_Fixed_EW_kWh_m2', 'Annual_Loss_Ang_Fixed_EW_kWh_m2', 'Annual_Loss_Therm_Fixed_EW_kWh_m2', 'Annual_Loss_Shading_Fixed_EW_kWh_m2', 'Annual_Yield_Fixed_EW_kWh_m2'),
+            ('Fixed N-S', 'Annual_I_Fixed_NS_kWh_m2', 'Annual_Loss_Ang_Fixed_NS_kWh_m2', 'Annual_Loss_Therm_Fixed_NS_kWh_m2', 'Annual_Loss_Shading_Fixed_NS_kWh_m2', 'Annual_Yield_Fixed_NS_kWh_m2'),
+            ('1-Axis Azimuth', 'Annual_I_1Axis_Azimuth_kWh_m2', 'Annual_Loss_Ang_1Axis_Az_kWh_m2', 'Annual_Loss_Therm_1Axis_Az_kWh_m2', 'Annual_Loss_Shading_1Axis_Azimuth_kWh_m2', 'Annual_Yield_1Axis_Azimuth_kWh_m2'),
+            ('1-Axis Polar', 'Annual_I_1Axis_Polar_kWh_m2', 'Annual_Loss_Ang_1Axis_Polar_kWh_m2', 'Annual_Loss_Therm_1Axis_Polar_kWh_m2', 'Annual_Loss_Shading_1Axis_Polar_kWh_m2', 'Annual_Yield_1Axis_Polar_kWh_m2'),
+            ('1-Axis Horizontal', 'Annual_I_1Axis_Horizontal_kWh_m2', 'Annual_Loss_Ang_1Axis_Horizontal_kWh_m2', 'Annual_Loss_Therm_1Axis_Horizontal_kWh_m2', 'Annual_Loss_Shading_1Axis_Horizontal_kWh_m2', 'Annual_Yield_1Axis_Horizontal_kWh_m2'),
+            ('1-Axis Elevation', 'Annual_I_1Axis_Elevation_kWh_m2', 'Annual_Loss_Ang_1Axis_El_kWh_m2', 'Annual_Loss_Therm_1Axis_El_kWh_m2', 'Annual_Loss_Shading_1Axis_Elevation_kWh_m2', 'Annual_Yield_1Axis_Elevation_kWh_m2'),
+            ('2-Axis', 'Annual_I_2Axis_kWh_m2', 'Annual_Loss_Ang_2Axis_kWh_m2', 'Annual_Loss_Therm_2Axis_kWh_m2', 'Annual_Loss_Shading_2Axis_kWh_m2', 'Annual_Yield_2Axis_kWh_m2')
         ]
         
         for i in range(0, len(pie_configs), 2):
@@ -2130,7 +2766,13 @@ elif st.session_state['user_mode'] == 'Advanced':
                 'P_Horiz', 'P_Fixed', 'P_Fixed_EW', 'P_Fixed_NS',
                 'P_1Axis_Az', 'P_1Axis_Polar', 'P_1Axis_Horiz', 'P_1Axis_El', 'P_2Axis',
                 'P_Horiz_25C', 'P_Fixed_25C', 'P_Fixed_EW_25C', 'P_Fixed_NS_25C',
-                'P_1Axis_Az_25C', 'P_1Axis_Polar_25C', 'P_1Axis_Horiz_25C', 'P_1Axis_El_25C', 'P_2Axis_25C'
+                'P_1Axis_Az_25C', 'P_1Axis_Polar_25C', 'P_1Axis_Horiz_25C', 'P_1Axis_El_25C', 'P_2Axis_25C',
+                # Shading Losses
+                'Loss_Shading_Horiz_W_m2', 'Loss_Shading_Fixed_W_m2', 
+                'Loss_Shading_Fixed_EW_W_m2', 'Loss_Shading_Fixed_NS_W_m2',
+                'Loss_Shading_1Axis_Az_W_m2', 'Loss_Shading_1Axis_Polar_W_m2',
+                'Loss_Shading_1Axis_Horizontal_W_m2', 'Loss_Shading_1Axis_El_W_m2',
+                'Loss_Shading_2Axis_W_m2'
             ]
             
             for p_col in power_cols_to_convert:
@@ -2160,6 +2802,16 @@ elif st.session_state['user_mode'] == 'Advanced':
                 'E_P_1Axis_Horiz_25C': 'sum',
                 'E_P_1Axis_El_25C': 'sum',
                 'E_P_2Axis_25C': 'sum',
+                # Shading Loss Sums
+                'E_Loss_Shading_Horiz_W_m2': 'sum',
+                'E_Loss_Shading_Fixed_W_m2': 'sum',
+                'E_Loss_Shading_Fixed_EW_W_m2': 'sum',
+                'E_Loss_Shading_Fixed_NS_W_m2': 'sum',
+                'E_Loss_Shading_1Axis_Az_W_m2': 'sum',
+                'E_Loss_Shading_1Axis_Polar_W_m2': 'sum',
+                'E_Loss_Shading_1Axis_Horizontal_W_m2': 'sum',
+                'E_Loss_Shading_1Axis_El_W_m2': 'sum',
+                'E_Loss_Shading_2Axis_W_m2': 'sum',
                 # Keep power sums for weighted temperature averages
                 'P_Horiz': 'sum',
                 'P_Fixed': 'sum',
@@ -2226,7 +2878,17 @@ elif st.session_state['user_mode'] == 'Advanced':
                 'E_P_1Axis_Polar_25C': 'P_1Axis_Polar_25C',
                 'E_P_1Axis_Horiz_25C': 'P_1Axis_Horiz_25C',
                 'E_P_1Axis_El_25C': 'P_1Axis_El_25C',
-                'E_P_2Axis_25C': 'P_2Axis_25C'
+                'E_P_2Axis_25C': 'P_2Axis_25C',
+                # Shading Loss Renames
+                'E_Loss_Shading_Horiz_W_m2': 'Loss_Shading_Horiz',
+                'E_Loss_Shading_Fixed_W_m2': 'Loss_Shading_Fixed',
+                'E_Loss_Shading_Fixed_EW_W_m2': 'Loss_Shading_Fixed_EW',
+                'E_Loss_Shading_Fixed_NS_W_m2': 'Loss_Shading_Fixed_NS',
+                'E_Loss_Shading_1Axis_Az_W_m2': 'Loss_Shading_1Axis_Az',
+                'E_Loss_Shading_1Axis_Polar_W_m2': 'Loss_Shading_1Axis_Polar',
+                'E_Loss_Shading_1Axis_Horizontal_W_m2': 'Loss_Shading_1Axis_Horizontal',
+                'E_Loss_Shading_1Axis_El_W_m2': 'Loss_Shading_1Axis_El',
+                'E_Loss_Shading_2Axis_W_m2': 'Loss_Shading_2Axis'
             }
             
             df_daily = df_daily.rename(columns=energy_renames)
@@ -2238,23 +2900,24 @@ elif st.session_state['user_mode'] == 'Advanced':
                     df_daily[col] = df_daily[col] / 1000  # Wh/m² to kWh/m²
         
         
-        # Mapping of modes to columns (name, T_cell, P_out, P_at_25C)
+        # Mapping of modes to columns (name, T_cell, P_out, P_at_25C, Loss_Shading)
         mode_mapping = [
-            ('Horizontal', 'T_cell_Horiz', 'P_Horiz', 'P_Horiz_25C'),
-            ('Fixed Tilt', 'T_cell_Fixed', 'P_Fixed', 'P_Fixed_25C'),
-            ('Fixed E-W', 'T_cell_Fixed_EW', 'P_Fixed_EW', 'P_Fixed_EW_25C'),
-            ('Fixed N-S', 'T_cell_Fixed_NS', 'P_Fixed_NS', 'P_Fixed_NS_25C'),
-            ('1-Axis Azimuth', 'T_cell_1Axis_Az', 'P_1Axis_Az', 'P_1Axis_Az_25C'),
-            ('1-Axis Polar', 'T_cell_1Axis_Polar', 'P_1Axis_Polar', 'P_1Axis_Polar_25C'),
-            ('1-Axis Horizontal', 'T_cell_1Axis_Horiz', 'P_1Axis_Horiz', 'P_1Axis_Horiz_25C'),
-            ('1-Axis Elevation', 'T_cell_1Axis_El', 'P_1Axis_El', 'P_1Axis_El_25C'),
-            ('2-Axis', 'T_cell_2Axis', 'P_2Axis', 'P_2Axis_25C')
+            ('Horizontal', 'T_cell_Horiz', 'P_Horiz', 'P_Horiz_25C', 'Loss_Shading_Horiz'),
+            ('Fixed Tilt', 'T_cell_Fixed', 'P_Fixed', 'P_Fixed_25C', 'Loss_Shading_Fixed'),
+            ('Fixed E-W', 'T_cell_Fixed_EW', 'P_Fixed_EW', 'P_Fixed_EW_25C', 'Loss_Shading_Fixed_EW'),
+            ('Fixed N-S', 'T_cell_Fixed_NS', 'P_Fixed_NS', 'P_Fixed_NS_25C', 'Loss_Shading_Fixed_NS'),
+            ('1-Axis Azimuth', 'T_cell_1Axis_Az', 'P_1Axis_Az', 'P_1Axis_Az_25C', 'Loss_Shading_1Axis_Az'),
+            ('1-Axis Polar', 'T_cell_1Axis_Polar', 'P_1Axis_Polar', 'P_1Axis_Polar_25C', 'Loss_Shading_1Axis_Polar'),
+            ('1-Axis Horizontal', 'T_cell_1Axis_Horiz', 'P_1Axis_Horiz', 'P_1Axis_Horiz_25C', 'Loss_Shading_1Axis_Horizontal'),
+            ('1-Axis Elevation', 'T_cell_1Axis_El', 'P_1Axis_El', 'P_1Axis_El_25C', 'Loss_Shading_1Axis_El'),
+            ('2-Axis', 'T_cell_2Axis', 'P_2Axis', 'P_2Axis_25C', 'Loss_Shading_2Axis')
         ]
         
         # Create tabs for each orientation
-        tabs = st.tabs([name for name, _, _, _ in mode_mapping])
+        show_shading = st.checkbox("Show Shading Impact", value=True, help="Visualize the potential energy generation if there were no shading obstructions.")
+        tabs = st.tabs([name for name, _, _, _, _ in mode_mapping])
         
-        for idx, (mode_name, t_cell_col, power_col, power_25c_col) in enumerate(mode_mapping):
+        for idx, (mode_name, t_cell_col, power_col, power_25c_col, shading_loss_col) in enumerate(mode_mapping):
             with tabs[idx]:
                 # Skip if Fixed Tilt data not available
                 if mode_name == 'Fixed Tilt' and t_cell_col not in df_daily.columns:
@@ -2292,6 +2955,20 @@ elif st.session_state['user_mode'] == 'Advanced':
                     fill='tozeroy',
                     fillcolor='rgba(46, 204, 113, 0.1)'
                 ))
+                
+                # Add Potential Energy (Unshaded) if requested
+                if show_shading and shading_loss_col in df_daily.columns:
+                    # Potential = Actual + Loss
+                    potential_energy = df_daily[power_col] + df_daily[shading_loss_col]
+                    
+                    fig.add_trace(go.Scatter(
+                        x=df_daily['Day'],
+                        y=potential_energy,
+                        name='Potential Energy (Unshaded)',
+                        line=dict(color='#2ecc71', width=2, dash='dash'),
+                        yaxis='y2',
+                        hoverinfo='y+name'
+                    ))
                 
                 # Add cooled power generation trace (right y-axis) - shows benefit of cooling
                 fig.add_trace(go.Scatter(
@@ -2376,9 +3053,9 @@ elif st.session_state['user_mode'] == 'Advanced':
         st.info(f"**Day {selected_day}** corresponds to **{date_str}** (in a non-leap year)")
         
         # Create tabs for each tracker type
-        hourly_tabs = st.tabs([name for name, _, _, _ in mode_mapping])
+        hourly_tabs = st.tabs([m[0] for m in mode_mapping])
         
-        for idx, (tab, (mode_name, t_cell_col, power_col, power_25c_col)) in enumerate(zip(hourly_tabs, mode_mapping)):
+        for idx, (tab, (mode_name, t_cell_col, power_col, power_25c_col, shading_loss_col)) in enumerate(zip(hourly_tabs, mode_mapping)):
             with tab:
                 # Filter hourly data for selected day
                 df_day = df_hourly[df_hourly['Day'] == selected_day].copy()

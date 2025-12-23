@@ -866,7 +866,7 @@ class SolarModel:
         
         return best_axis_tilt, total_electrical_yield
 
-    def generate_annual_profile(self, efficiency=0.2, fixed_tilt=None, fixed_azimuth=None, optimal_tilt=None, optimize_electrical=False, time_step_minutes=60):
+    def generate_annual_profile(self, efficiency=0.2, fixed_tilt=None, fixed_azimuth=None, optimal_tilt=None, optimize_electrical=False, time_step_minutes=60, obstructions=None):
         """
         Generate solar profile for the entire year at specified time resolution.
         Calculates irradiance, PV Power, and Losses for multiple collector orientations.
@@ -879,10 +879,43 @@ class SolarModel:
             efficiency (float, optional): PV Module Efficiency (0.0 to 1.0). Default 0.14.
             optimize_electrical (bool, optional): Whether to optimize for electrical yield.
             time_step_minutes (int, optional): Time resolution in minutes (5, 30, or 60). Default 60.
+            obstructions (list, optional): List of obstruction dicts with 'az_left', 'az_right', 'elev'.
             
         Returns:
             tuple: (pd.DataFrame, dict) -> (Hourly Data, Annual Totals)
         """
+        # Build shading lookup table if obstructions provided
+        shading_lookup = {}
+        if obstructions:
+            print("Building shading lookup table...")
+            # Pre-calculate shading for each time bin
+            # Use 1-minute resolution for accuracy, then aggregate to time_step
+            for day in range(1, 366):
+                for time_bin in range(int(24 * 60 / time_step_minutes)):
+                    # Calculate start and end of this time bin in fractional hours
+                    bin_start_hour = time_bin * time_step_minutes / 60.0
+                    bin_end_hour = (time_bin + 1) * time_step_minutes / 60.0
+                    
+                    # Sample this bin at 1-minute intervals
+                    blocked_minutes = 0
+                    total_minutes = 0
+                    
+                    for minute_offset in range(time_step_minutes):
+                        hour_frac = bin_start_hour + minute_offset / 60.0
+                        geo = self.calculate_geometry(day, hour_frac)
+                        
+                        if geo['elevation'] > 0:
+                            total_minutes += 1
+                            if self.check_sun_blocked(geo['azimuth'], geo['elevation'], obstructions):
+                                blocked_minutes += 1
+                    
+                    # Calculate fraction blocked for this bin
+                    if total_minutes > 0:
+                        shading_lookup[(day, time_bin)] = blocked_minutes / total_minutes
+                    else:
+                        shading_lookup[(day, time_bin)] = 0.0
+            print(f"Shading lookup table built: {len(shading_lookup)} entries")
+        
         data = []
         
         # Use provided overrides or defaults
@@ -912,8 +945,15 @@ class SolarModel:
         loss_ang_horiz = 0; loss_therm_horiz = 0
         loss_ang_1axis_az = 0; loss_therm_1axis_az = 0
         loss_ang_1axis_el = 0; loss_therm_1axis_el = 0
-        loss_ang_2axis = 0; loss_therm_2axis = 0
-        loss_ang_fixed = 0; loss_therm_fixed = 0
+        loss_ang_2axis = 0; loss_therm_2axis = 0; loss_shading_2axis = 0
+        loss_ang_fixed = 0; loss_therm_fixed = 0; loss_shading_fixed = 0
+        
+        # Initialize other shading losses
+        loss_shading_horiz = 0
+        loss_shading_1axis_az = 0
+        loss_shading_1axis_el = 0
+        loss_shading_1axis_horiz = 0
+        loss_shading_1axis_polar = 0
         
         # Incident Totals
         inc_horiz = 0; inc_1axis_az = 0; inc_1axis_el = 0; inc_2axis = 0; inc_fixed = 0
@@ -947,6 +987,16 @@ class SolarModel:
                 Ib = irrad['dni']
                 C = irrad['diffuse_factor']
                 
+                # Apply shading if obstructions provided
+                if obstructions and (day, step) in shading_lookup:
+                    shading_fraction = shading_lookup[(day, step)]
+                    # Reduce DNI by shading fraction (direct beam blocked)
+                    # Diffuse remains (simplified assumption)
+                    delta_Ib = Ib * shading_fraction
+                    Ib = Ib * (1 - shading_fraction)
+                else:
+                    delta_Ib = 0.0
+                
                 # Calculate ambient temperature for this time step
                 T_amb = self.calculate_ambient_temperature(day, hour_fractional)
                 
@@ -954,12 +1004,16 @@ class SolarModel:
                 Ic_horiz, cos_theta_horiz = self.calculate_incident_irradiance(beta, phi_s, 0, 0, Ib, C)
                 res_horiz = self.calculate_pv_performance(Ic_horiz, cos_theta_horiz, T_amb=T_amb, efficiency=efficiency)
                 
+                # Calculate Shading Loss (Power)
+                loss_shading_horiz += delta_Ib * max(0, cos_theta_horiz) * efficiency
+                
                 # --- Mode 2: 1-Axis Azimuth Tracking ---
                 # Uses tilt_1axis_az
                 sigma_az_track = tilt_1axis_az
                 phi_c_az_track = phi_s
                 Ic_1axis_az, cos_theta_1axis_az = self.calculate_incident_irradiance(beta, phi_s, sigma_az_track, phi_c_az_track, Ib, C)
                 res_1axis_az = self.calculate_pv_performance(Ic_1axis_az, cos_theta_1axis_az, T_amb=T_amb, efficiency=efficiency)
+                loss_shading_1axis_az += delta_Ib * max(0, cos_theta_1axis_az) * efficiency
                 
                 # --- Mode 3: 1-Axis Elevation Tracking ---
                 # Tracker rotates on E-W axis, tilting N-S to track elevation.
@@ -994,6 +1048,7 @@ class SolarModel:
                 
                 Ic_1axis_el, cos_theta_1axis_el = self.calculate_incident_irradiance(beta, phi_s, sigma_el_track, phi_c_el_track, Ib, C)
                 res_1axis_el = self.calculate_pv_performance(Ic_1axis_el, cos_theta_1axis_el, T_amb=T_amb, efficiency=efficiency)
+                loss_shading_1axis_el += delta_Ib * max(0, cos_theta_1axis_el) * efficiency
                 
                 # --- Mode 4: 2-Axis Tracking ---
                 # Panel always points directly at the sun
@@ -1013,6 +1068,7 @@ class SolarModel:
                 
                 # For 2-axis, cos_theta is always 1 (perfect tracking)
                 res_2axis = self.calculate_pv_performance(Ic_2axis, 1.0, T_amb=T_amb, efficiency=efficiency)
+                loss_shading_2axis += delta_Ib * 1.0 * efficiency
                 
                 # --- Mode 5: 1-Axis Polar (Hour Angle) Tracking ---
                 # User Inputs:
@@ -1147,6 +1203,7 @@ class SolarModel:
                     Ic_polar, cos_theta_polar = self.calculate_incident_irradiance(beta, phi_s, beta_c_polar, phi_c_polar, Ib, C)
 
                 res_polar = self.calculate_pv_performance(Ic_polar, cos_theta_polar, T_amb=T_amb, efficiency=efficiency)
+                loss_shading_1axis_polar += delta_Ib * max(0, cos_theta_polar) * efficiency
                 
                 # --- Mode 9: 1-Axis Horizontal (New) ---
                 # Axis Tilt = 0. Axis Azimuth = 0 (North-South).
@@ -1196,7 +1253,7 @@ class SolarModel:
                 if n_rot_z_h < 0:
                     sigma_horiz = 0
                     phi_c_horiz = 0
-                    cos_theta_horiz = 0
+                    cos_theta_1axis_horiz = 0
                     Ic_horiz_track = 0
                 else:
                     # Panel tilt from horizontal = 90° - elevation of normal
@@ -1205,15 +1262,17 @@ class SolarModel:
                     sigma_horiz = 90.0 - np.degrees(np.arcsin(np.clip(n_rot_z_h, -1, 1)))
                     phi_c_horiz = np.degrees(np.arctan2(n_rot_x_h, n_rot_y_h))
                     
-                    Ic_horiz_track, cos_theta_horiz = self.calculate_incident_irradiance(beta, phi_s, sigma_horiz, phi_c_horiz, Ib, C)
+                    Ic_horiz_track, cos_theta_1axis_horiz = self.calculate_incident_irradiance(beta, phi_s, sigma_horiz, phi_c_horiz, Ib, C)
                     
-                res_horiz_track = self.calculate_pv_performance(Ic_horiz_track, cos_theta_horiz, T_amb=T_amb, efficiency=efficiency)
+                res_horiz_track = self.calculate_pv_performance(Ic_horiz_track, cos_theta_1axis_horiz, T_amb=T_amb, efficiency=efficiency)
+                loss_shading_1axis_horiz += delta_Ib * max(0, cos_theta_1axis_horiz) * efficiency
                 
                 # --- Mode 6: Fixed Custom (Optional) ---
                 res_fixed = None
                 if fixed_tilt is not None and fixed_azimuth is not None:
                     Ic_fixed, cos_theta_fixed = self.calculate_incident_irradiance(beta, phi_s, fixed_tilt, fixed_azimuth, Ib, C)
                     res_fixed = self.calculate_pv_performance(Ic_fixed, cos_theta_fixed, T_amb=T_amb, efficiency=efficiency)
+                    loss_shading_fixed += delta_Ib * max(0, cos_theta_fixed) * efficiency
                     
                 # --- Mode 7: Fixed East-West (Dual Panel) ---
                 # Two panels, both tilted 45 deg.
@@ -1326,7 +1385,17 @@ class SolarModel:
                     'Loss_Therm_1Axis_El_W_m2': res_1axis_el['Loss_Thermal'],
                     'Loss_Therm_2Axis_W_m2': res_2axis['Loss_Thermal'],
                     'Loss_Therm_Fixed_EW_W_m2': Loss_Therm_ew,
-                    'Loss_Therm_Fixed_NS_W_m2': Loss_Therm_ns
+                    'Loss_Therm_Fixed_NS_W_m2': Loss_Therm_ns,
+                    
+                    # Shading Losses (W/m2)
+                    'Loss_Shading_Horiz_W_m2': delta_Ib * max(0, cos_theta_horiz) * efficiency,
+                    'Loss_Shading_1Axis_Az_W_m2': delta_Ib * max(0, cos_theta_1axis_az) * efficiency,
+                    'Loss_Shading_1Axis_Polar_W_m2': delta_Ib * max(0, cos_theta_polar) * efficiency,
+                    'Loss_Shading_1Axis_Horizontal_W_m2': delta_Ib * max(0, cos_theta_1axis_horiz) * efficiency,
+                    'Loss_Shading_1Axis_El_W_m2': delta_Ib * max(0, cos_theta_1axis_el) * efficiency,
+                    'Loss_Shading_2Axis_W_m2': delta_Ib * 1.0 * efficiency,
+                    'Loss_Shading_Fixed_EW_W_m2': 0, # Simplified: ignore shading on dual fixed for now or calc properly
+                    'Loss_Shading_Fixed_NS_W_m2': 0  # Simplified
                 }
                 
                 # Add Fixed Custom data if calculated
@@ -1338,6 +1407,7 @@ class SolarModel:
                         'P_Fixed_25C': res_fixed['P_at_25C'],
                         'Loss_Ang_Fixed_W_m2': res_fixed['Loss_Angular'],
                         'Loss_Therm_Fixed_W_m2': res_fixed['Loss_Thermal'],
+                        'Loss_Shading_Fixed_W_m2': delta_Ib * max(0, cos_theta_fixed) * efficiency,
                     })
                 
                 data.append(row)
@@ -1395,6 +1465,15 @@ class SolarModel:
             'Annual_Loss_Therm_2Axis_kWh_m2': (df['Loss_Therm_2Axis_W_m2'].sum() * time_step_hours) / 1000,
             'Annual_Loss_Therm_Fixed_EW_kWh_m2': (df['Loss_Therm_Fixed_EW_W_m2'].sum() * time_step_hours) / 1000,
             'Annual_Loss_Therm_Fixed_NS_kWh_m2': (df['Loss_Therm_Fixed_NS_W_m2'].sum() * time_step_hours) / 1000,
+            
+            # Annual Losses (Shading - Power kWh/m2)
+            'Annual_Loss_Shading_Horizontal_kWh_m2': loss_shading_horiz * time_step_hours / 1000,
+            'Annual_Loss_Shading_1Axis_Azimuth_kWh_m2': loss_shading_1axis_az * time_step_hours / 1000,
+            'Annual_Loss_Shading_1Axis_Polar_kWh_m2': loss_shading_1axis_polar * time_step_hours / 1000,
+            'Annual_Loss_Shading_1Axis_Horizontal_kWh_m2': loss_shading_1axis_horiz * time_step_hours / 1000,
+            'Annual_Loss_Shading_1Axis_Elevation_kWh_m2': loss_shading_1axis_el * time_step_hours / 1000,
+            'Annual_Loss_Shading_2Axis_kWh_m2': loss_shading_2axis * time_step_hours / 1000,
+            'Annual_Loss_Shading_Fixed_kWh_m2': loss_shading_fixed * time_step_hours / 1000,
         }
         
         # Fixed Custom Totals (if calculated)
@@ -1404,6 +1483,7 @@ class SolarModel:
              totals['Annual_Yield_Cooled_Fixed_kWh_m2'] = (df['P_Fixed_25C'].sum() * time_step_hours) / 1000
              totals['Annual_Loss_Ang_Fixed_kWh_m2'] = (df['Loss_Ang_Fixed_W_m2'].sum() * time_step_hours) / 1000
              totals['Annual_Loss_Therm_Fixed_kWh_m2'] = (df['Loss_Therm_Fixed_W_m2'].sum() * time_step_hours) / 1000
+             totals['Annual_Loss_Shading_Fixed_kWh_m2'] = loss_shading_fixed * time_step_hours / 1000
         else:
              totals['Annual_Yield_Fixed_kWh_m2'] = 0
              totals['Annual_Yield_Cooled_Fixed_kWh_m2'] = 0
