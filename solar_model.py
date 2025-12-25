@@ -305,10 +305,10 @@ class SolarModel:
             obstructions: List of {'az_left', 'az_right', 'elev'} in compass convention (0-360)
         
         Returns:
-            bool: True if sun is blocked
+            int or None: Index of the obstruction if blocked, else None
         """
         if not obstructions:
-            return False
+            return None
         
         # Convert sun azimuth from -90/+90 convention to 0-360 for comparison
         # North=0, East=90, South=180, West=270
@@ -316,7 +316,7 @@ class SolarModel:
         if sun_az_360 < 0:
             sun_az_360 += 360
             
-        for obs in obstructions:
+        for idx, obs in enumerate(obstructions):
             # Obstruction angles are already in 0-360 compass convention
             az_left = obs['az_left']
             az_right = obs['az_right']
@@ -326,9 +326,9 @@ class SolarModel:
             if elevation_sun <= elev_obs:
                 # Check if sun azimuth is within obstacle range
                 if self.is_azimuth_in_range(sun_az_360, az_left, az_right):
-                    return True  # Sun is blocked
+                    return idx  # Return index of blocking obstacle
         
-        return False  # Sun is not blocked
+        return None
 
     def calculate_annual_shading_loss(self, obstructions):
         """
@@ -362,10 +362,10 @@ class SolarModel:
             # Track azimuth range for this day
             day_azimuths = []
             
-            # Use 1-minute steps for accurate path-crossing detection
             time_step_hours = 1.0 / 60.0  # 1 minute
             prev_geo = None
             prev_blocked = None
+            day_blockers = set()
             
             for hour in np.arange(0, 24, time_step_hours):
                 geo = self.calculate_geometry(day, hour)
@@ -383,10 +383,13 @@ class SolarModel:
                     day_potential += step_energy
                     
                     # Check shading
-                    is_blocked = self.check_sun_blocked(geo['azimuth'], geo['elevation'], obstructions)
+                    blocker_idx = self.check_sun_blocked(geo['azimuth'], geo['elevation'], obstructions)
                     
-                    if is_blocked:
+                    if blocker_idx is not None:
                         day_blocked_minutes += 1
+                        # Track which obstruction is causing the loss
+                        day_blockers.add(blocker_idx)
+                        
                         # Calculate Beam Horizontal loss
                         dni = irr['dni']
                         beam_horiz = dni * np.sin(np.radians(geo['elevation']))
@@ -394,7 +397,7 @@ class SolarModel:
                         day_loss += step_loss
                 
                 prev_geo = geo
-                prev_blocked = is_blocked if geo['elevation'] > 0 else None
+                prev_blocked = (blocker_idx is not None) if geo['elevation'] > 0 else None
             
             total_potential += day_potential
             total_loss += day_loss
@@ -422,7 +425,8 @@ class SolarModel:
                     'day': day,
                     'potential_kwh_m2': day_potential,
                     'loss_kwh_m2': day_loss,
-                    'loss_percent': (day_loss / day_potential) * 100
+                    'loss_percent': (day_loss / day_potential) * 100,
+                    'blockers': list(day_blockers)
                 })
             else:
                 daily_stats.append({
@@ -440,21 +444,26 @@ class SolarModel:
             'debug_log': debug_log
         }
 
-    def calculate_incident_irradiance(self, beta_deg, phi_s_deg, sigma_deg, phi_c_deg, Ib, C, rho=0.2):
+    def calculate_incident_irradiance(self, beta_deg, phi_s_deg, sigma_deg, phi_c_deg, Ib_incident, C, Ib_atmos=None, rho=0.2):
         """
-        Calculate total incident irradiance (Ic) on a tilted surface.
+        Calculate total incident irradiance (Ic) on a tilted surface, returning split components.
         
         Args:
             beta_deg: Solar Elevation
             phi_s_deg: Solar Azimuth
             sigma_deg: Panel Tilt
             phi_c_deg: Panel Azimuth
-            Ib: Direct Normal Irradiance
+            Ib_incident: Direct Normal Irradiance actually hitting the panel (beam component, handles shading)
             C: Sky Diffuse Factor
+            Ib_atmos: Atmospheric Direct Normal Irradiance (unshaded, used for diffuse scaling). 
+                      If None, defaults to Ib_incident.
             rho: Ground Reflectance (Albedo)
             
         Returns:
-            tuple: (Total Incident Irradiance Ic, Cosine of Incidence Angle cos_theta)
+            tuple: (Ibc, Idc_total, cos_theta)
+                - Ibc: Beam component incident on panel (W/m2)
+                - Idc_total: Sum of Diffuse and Ground-Reflected component (W/m2)
+                - cos_theta: Cosine of Incidence Angle
         """
         # Convert to radians
         beta = np.radians(beta_deg)
@@ -462,34 +471,38 @@ class SolarModel:
         sigma = np.radians(sigma_deg)
         phi_c = np.radians(phi_c_deg)
         
+        # Fallback for Ib_atmos
+        if Ib_atmos is None:
+            Ib_atmos = Ib_incident
+        
         # 1. Angle of Incidence (theta) [Eq 8]
         cos_theta = np.cos(beta) * np.cos(phi_s - phi_c) * np.sin(sigma) + \
                     np.sin(beta) * np.cos(sigma)
         
-        # Clamp cos_theta to 0 (sun behind panel)
-        cos_theta = max(0, cos_theta)
+        # Save raw cos_theta for return (even if negative)
+        # Note: Ibc will be 0 if cos_theta <= 0 as usual.
         
         # 2. Beam Component (Ibc) [Eq 14]
-        Ibc = Ib * cos_theta
+        # Only the beam component is blocked by shading
+        Ibc = Ib_incident * max(0, cos_theta)
         
         # 3. Diffuse Component (Idc) [Eq 17]
-        # Idc = C * Ib * (1 + cos(sigma))/2
-        Idc = C * Ib * (1 + np.cos(sigma)) / 2
+        # Idc depends on atmospheric conditions (Ib_atmos), not local shading
+        Idc = C * Ib_atmos * (1 + np.cos(sigma)) / 2
         
         # 4. Reflected Component (Irc) [Eq 18]
-        # Irc = rho * Ib * (sin(beta) + C) * (1 - cos(sigma))/2
-        Irc = rho * Ib * (np.sin(beta) + C) * (1 - np.cos(sigma)) / 2
+        # Reflected light depends on total horizontal irradiance (atmosphere-driven)
+        Irc = rho * Ib_atmos * (np.sin(beta) + C) * (1 - np.cos(sigma)) / 2
         
-        # Total Incident Irradiance [Eq 19]
-        Ic = Ibc + Idc + Irc
-        return Ic, cos_theta
+        return Ibc, (Idc + Irc), cos_theta
 
-    def calculate_pv_performance(self, Ic, cos_theta, T_amb=25, efficiency=0.14):
+    def calculate_pv_performance(self, I_beam, I_diffuse, cos_theta, T_amb=25, efficiency=0.14):
         """
-        Calculate PV Power Output and Losses.
+        Calculate PV Power Output and Losses using split beam/diffuse components.
         
         Args:
-            Ic (float): Total Incident Irradiance (W/m2)
+            I_beam (float): Beam component incident on panel (W/m2)
+            I_diffuse (float): Total diffuse (sky + ground) incident on panel (W/m2)
             cos_theta (float): Cosine of Angle of Incidence
             T_amb (float): Ambient Temperature (C)
             efficiency (float): PV Module Efficiency (0.0 to 1.0). Default 0.14.
@@ -507,7 +520,7 @@ class SolarModel:
         EFF_STC = efficiency # Efficiency at STC
         ALPHA_P = -0.0045 # Power Temp Coefficient (-0.45%/C)
         
-        # 1. Angular Loss (AL)
+        # 1. Angular Loss (AL) - Applied ONLY to the direct beam
         if cos_theta <= 0:
             IAM = 0
         else:
@@ -516,10 +529,12 @@ class SolarModel:
             IAM = numerator / denominator
             
         # Effective Irradiance (S)
-        S_W_m2 = Ic * IAM
+        # Direct beam is scaled by IAM; diffuse light is preserved as-is.
+        S_W_m2 = (I_beam * IAM) + I_diffuse
         
         # Angular Loss (Irradiance Level)
-        Loss_Angular = Ic - S_W_m2
+        # Difference between potential incident (I_beam + I_diffuse) and effective (S)
+        Loss_Angular = I_beam - (I_beam * IAM)
         
         # 2. Cell Temperature (T_cell)
         S_kW_m2 = S_W_m2 / 1000.0
@@ -539,7 +554,6 @@ class SolarModel:
         
         # Smart Cooling Logic
         # Only "cool" if T_cell > 25°C. Otherwise, panel is already below 25°C.
-        # Cooling a cold panel would require heating, which is nonsensical.
         if T_cell > 25:
             P_cooled = P_ref_25C  # Benefit from cooling to 25°C
             Cooling_Benefit = P_ref_25C - P_out  # Positive value (gain from cooling)
@@ -549,9 +563,9 @@ class SolarModel:
         
         return {
             'P_out': max(0, P_out),
-            'P_at_25C': max(0, P_ref_25C),  # Theoretical power if cooled to 25°C (kept for compatibility)
-            'P_cooled': max(0, P_cooled),   # Smart cooling: max(P_out, P_at_25C)
-            'Cooling_Benefit': Cooling_Benefit,  # Actual benefit from active cooling
+            'P_at_25C': max(0, P_ref_25C),  # Theoretical power if cooled to 25°C
+            'P_cooled': max(0, P_cooled),   # Smart cooling
+            'Cooling_Benefit': Cooling_Benefit,
             'Loss_Angular': max(0, Loss_Angular),
             'Loss_Thermal': Loss_Thermal,
             'T_cell': T_cell
@@ -602,14 +616,14 @@ class SolarModel:
                 panel_azimuth = 0 if self.latitude < 0 else 180
                 
                 for data in daylight_data:
-                    Ic, cos_theta = self.calculate_incident_irradiance(
+                    Ibc, Idc, cos_theta = self.calculate_incident_irradiance(
                         data['beta'], data['phi_s'], 
                         tilt, panel_azimuth, 
                         data['Ib'], data['C']
                     )
                     
                     # Calculate PV performance to get electrical output
-                    pv_result = self.calculate_pv_performance(Ic, cos_theta, T_amb=data['T_amb'], efficiency=efficiency)
+                    pv_result = self.calculate_pv_performance(Ibc, Idc, cos_theta, T_amb=data['T_amb'], efficiency=efficiency)
                     total_value += (pv_result['P_out'] / 1000.0)  # Convert W to kW, sum over hours
             else:
                 # Mode 2: Optimize for incident irradiance only (geometric optimum)
@@ -617,14 +631,14 @@ class SolarModel:
                 panel_azimuth = 0 if self.latitude < 0 else 180
                 
                 for data in daylight_data:
-                    Ic, cos_theta = self.calculate_incident_irradiance(
+                    Ibc, Idc, cos_theta = self.calculate_incident_irradiance(
                         data['beta'], data['phi_s'], 
                         tilt, panel_azimuth, 
                         data['Ib'], data['C']
                     )
                     
-                    # Sum incident irradiance energy (Ic is W/m², divide by 1000 to get kWh/m²)
-                    total_value += (Ic / 1000.0)
+                    # Sum incident irradiance energy (divide by 1000 to get kWh/m²)
+                    total_value += ((Ibc + Idc) / 1000.0)
             
             if total_value > max_optimization_value:
                 max_optimization_value = total_value
@@ -635,14 +649,14 @@ class SolarModel:
         panel_azimuth = 0 if self.latitude < 0 else 180
         
         for data in daylight_data:
-            Ic, cos_theta = self.calculate_incident_irradiance(
+            Ibc, Idc, cos_theta = self.calculate_incident_irradiance(
                 data['beta'], data['phi_s'], 
                 best_tilt, panel_azimuth, 
                 data['Ib'], data['C']
             )
             
             # Calculate PV performance to get electrical output
-            pv_result = self.calculate_pv_performance(Ic, cos_theta, T_amb=data['T_amb'], efficiency=efficiency)
+            pv_result = self.calculate_pv_performance(Ibc, Idc, cos_theta, T_amb=data['T_amb'], efficiency=efficiency)
             total_electrical_yield += (pv_result['P_out'] / 1000.0)  # Convert W to kW, sum over hours
                 
         return best_tilt, total_electrical_yield  # Return kWh/m2 electrical yield
@@ -691,17 +705,17 @@ class SolarModel:
                 # 1-Axis Azimuth: Fixed tilt, azimuth follows sun
                 phi_c = data['phi_s']  # Panel azimuth matches sun azimuth
                 
-                Ic, cos_theta = self.calculate_incident_irradiance(
+                Ibc, Idc, cos_theta = self.calculate_incident_irradiance(
                     data['beta'], data['phi_s'],
                     tilt, phi_c,
                     data['Ib'], data['C']
                 )
                 
                 if optimize_electrical:
-                    pv_result = self.calculate_pv_performance(Ic, cos_theta, T_amb=data['T_amb'], efficiency=efficiency)
+                    pv_result = self.calculate_pv_performance(Ibc, Idc, cos_theta, T_amb=data['T_amb'], efficiency=efficiency)
                     total_value += (pv_result['P_out'] / 1000.0)
                 else:
-                    total_value += (Ic / 1000.0)
+                    total_value += ((Ibc + Idc) / 1000.0)
             
             if total_value > max_optimization_value:
                 max_optimization_value = total_value
@@ -711,12 +725,12 @@ class SolarModel:
         total_electrical_yield = 0
         for data in daylight_data:
             phi_c = data['phi_s']
-            Ic, cos_theta = self.calculate_incident_irradiance(
+            Ibc, Idc, cos_theta = self.calculate_incident_irradiance(
                 data['beta'], data['phi_s'],
                 best_tilt, phi_c,
                 data['Ib'], data['C']
             )
-            pv_result = self.calculate_pv_performance(Ic, cos_theta, T_amb=data['T_amb'], efficiency=efficiency)
+            pv_result = self.calculate_pv_performance(Ibc, Idc, cos_theta, T_amb=data['T_amb'], efficiency=efficiency)
             total_electrical_yield += (pv_result['P_out'] / 1000.0)
         
         return best_tilt, total_electrical_yield
@@ -804,17 +818,17 @@ class SolarModel:
                 sigma_polar = np.degrees(np.arccos(n_rot_z))
                 phi_c_polar = np.degrees(np.arctan2(n_rot_x, n_rot_y))
                 
-                Ic, cos_theta = self.calculate_incident_irradiance(
+                Ibc, Idc, cos_theta = self.calculate_incident_irradiance(
                     data['beta'], data['phi_s'],
                     sigma_polar, phi_c_polar,
                     data['Ib'], data['C']
                 )
                 
                 if optimize_electrical:
-                    pv_result = self.calculate_pv_performance(Ic, cos_theta, T_amb=data['T_amb'], efficiency=efficiency)
+                    pv_result = self.calculate_pv_performance(Ibc, Idc, cos_theta, T_amb=data['T_amb'], efficiency=efficiency)
                     total_value += (pv_result['P_out'] / 1000.0)
                 else:
-                    total_value += (Ic / 1000.0)
+                    total_value += ((Ibc + Idc) / 1000.0)
             
             if total_value > max_optimization_value:
                 max_optimization_value = total_value
@@ -856,25 +870,26 @@ class SolarModel:
             sigma_polar = np.degrees(np.arccos(n_rot_z))
             phi_c_polar = np.degrees(np.arctan2(n_rot_x, n_rot_y))
             
-            Ic, cos_theta = self.calculate_incident_irradiance(
+            Ibc, Idc, cos_theta = self.calculate_incident_irradiance(
                 data['beta'], data['phi_s'],
                 sigma_polar, phi_c_polar,
                 data['Ib'], data['C']
             )
-            pv_result = self.calculate_pv_performance(Ic, cos_theta, T_amb=data['T_amb'], efficiency=efficiency)
+            pv_result = self.calculate_pv_performance(Ibc, Idc, cos_theta, T_amb=data['T_amb'], efficiency=efficiency)
             total_electrical_yield += (pv_result['P_out'] / 1000.0)
         
         return best_axis_tilt, total_electrical_yield
 
-    def generate_annual_profile(self, efficiency=0.2, fixed_tilt=None, fixed_azimuth=None, optimal_tilt=None, optimize_electrical=False, time_step_minutes=60, obstructions=None):
+    def generate_annual_profile(self, efficiency=0.2, fixed_tilt=None, fixed_azimuth=None, fixed_arrays=None, optimal_tilt=None, optimize_electrical=False, time_step_minutes=60, obstructions=None):
         """
         Generate solar profile for the entire year at specified time resolution.
         Calculates irradiance, PV Power, and Losses for multiple collector orientations.
         Optionally calculates for a "Fixed Custom" orientation.
         
         Args:
-            fixed_tilt (float, optional): Tilt angle for custom fixed panel.
-            fixed_azimuth (float, optional): Azimuth angle for custom fixed panel.
+            fixed_tilt (float, optional): Tilt angle for custom fixed panel. (Used if fixed_arrays not provided).
+            fixed_azimuth (float, optional): Azimuth angle for custom fixed panel. (Used if fixed_arrays not provided).
+            fixed_arrays (list, optional): List of dicts {'tilt', 'azimuth', 'capacity_kw'}.
             optimal_tilt (float, optional): General optimal tilt (used as flag/fallback).
             efficiency (float, optional): PV Module Efficiency (0.0 to 1.0). Default 0.14.
             optimize_electrical (bool, optional): Whether to optimize for electrical yield.
@@ -918,9 +933,25 @@ class SolarModel:
         
         data = []
         
-        # Use provided overrides or defaults
-        tilt_fixed = fixed_tilt if fixed_tilt is not None else self.tilt
-        azimuth_fixed = fixed_azimuth if fixed_azimuth is not None else self.azimuth
+        # Prepare Fixed Arrays for simulation
+        if fixed_arrays and len(fixed_arrays) > 0:
+            active_fixed_arrays = fixed_arrays
+            # For back-compat and metadata:
+            tilt_fixed = active_fixed_arrays[0]['tilt']
+            azimuth_fixed = active_fixed_arrays[0]['azimuth']
+        else:
+            # Build single-array list from legacy/scalar inputs
+            if fixed_tilt is not None:
+                tilt_fixed = fixed_tilt
+            elif optimal_tilt is not None:
+                tilt_fixed = optimal_tilt
+            else:
+                tilt_fixed = self.tilt
+            azimuth_fixed = fixed_azimuth if fixed_azimuth is not None else self.azimuth
+            active_fixed_arrays = [{'tilt': tilt_fixed, 'azimuth': azimuth_fixed, 'capacity_kw': 1.0}]
+            
+        total_fixed_capacity = sum(a['capacity_kw'] for a in active_fixed_arrays)
+        if total_fixed_capacity <= 0: total_fixed_capacity = 1.0 # Safety
         
         # Tilt for 1-Axis Trackers
         # If optimal_tilt is provided, it implies the user wants optimized tilts.
@@ -984,25 +1015,28 @@ class SolarModel:
                 # Extract common variables
                 beta = geom['elevation']
                 phi_s = geom['azimuth']
-                Ib = irrad['dni']
+                Ib_atmos = irrad['dni'] # Unshaded atmospheric DNI
                 C = irrad['diffuse_factor']
                 
-                # Apply shading if obstructions provided
+                # Apply shading if obstructions provided (only to the incident beam)
                 if obstructions and (day, step) in shading_lookup:
                     shading_fraction = shading_lookup[(day, step)]
-                    # Reduce DNI by shading fraction (direct beam blocked)
-                    # Diffuse remains (simplified assumption)
-                    delta_Ib = Ib * shading_fraction
-                    Ib = Ib * (1 - shading_fraction)
+                    # Reduce I_incident by shading fraction (direct beam blocked)
+                    Ib_incident = Ib_atmos * (1 - shading_fraction)
+                    delta_Ib = Ib_atmos * shading_fraction
                 else:
+                    Ib_incident = Ib_atmos
                     delta_Ib = 0.0
                 
                 # Calculate ambient temperature for this time step
                 T_amb = self.calculate_ambient_temperature(day, hour_fractional)
                 
                 # --- Mode 1: Horizontal ---
-                Ic_horiz, cos_theta_horiz = self.calculate_incident_irradiance(beta, phi_s, 0, 0, Ib, C)
-                res_horiz = self.calculate_pv_performance(Ic_horiz, cos_theta_horiz, T_amb=T_amb, efficiency=efficiency)
+                Ibc_horiz, Idc_horiz, cos_theta_horiz = self.calculate_incident_irradiance(beta, phi_s, 0, 0, Ib_incident, C, Ib_atmos=Ib_atmos)
+                res_horiz = self.calculate_pv_performance(Ibc_horiz, Idc_horiz, cos_theta_horiz, T_amb=T_amb, efficiency=efficiency)
+                
+                # Total Ic for reporting
+                Ic_horiz = Ibc_horiz + Idc_horiz
                 
                 # Calculate Shading Loss (Power)
                 loss_shading_horiz += delta_Ib * max(0, cos_theta_horiz) * efficiency
@@ -1011,49 +1045,60 @@ class SolarModel:
                 # Uses tilt_1axis_az
                 sigma_az_track = tilt_1axis_az
                 phi_c_az_track = phi_s
-                Ic_1axis_az, cos_theta_1axis_az = self.calculate_incident_irradiance(beta, phi_s, sigma_az_track, phi_c_az_track, Ib, C)
-                res_1axis_az = self.calculate_pv_performance(Ic_1axis_az, cos_theta_1axis_az, T_amb=T_amb, efficiency=efficiency)
+                Ibc_1axis_az, Idc_1axis_az, cos_theta_1axis_az = self.calculate_incident_irradiance(beta, phi_s, sigma_az_track, phi_c_az_track, Ib_incident, C, Ib_atmos=Ib_atmos)
+                res_1axis_az = self.calculate_pv_performance(Ibc_1axis_az, Idc_1axis_az, cos_theta_1axis_az, T_amb=T_amb, efficiency=efficiency)
+                
+                # Total Ic for reporting
+                Ic_1axis_az = Ibc_1axis_az + Idc_1axis_az
                 loss_shading_1axis_az += delta_Ib * max(0, cos_theta_1axis_az) * efficiency
                 
                 # --- Mode 3: 1-Axis Elevation Tracking ---
-                # Tracker rotates on E-W axis, tilting N-S to track elevation.
+                # Tracker rotates on an East-West axis, tilting North-Sout h to track the sun.
+                # Unlike a simple manual adjustment, this "Clever" logic continuously optimizes 
+                # tilt to minimize the Angle of Incidence (AOI) throughout the day.
                 
                 delta = geom['declination']
                 
-                # Determine panel orientation based on latitude and declination
-                if abs(self.latitude) >= 23.45:
-                    # Outside tropics: Always face equator
-                    phi_c_el_track = 0 if self.latitude < 0 else 180
-                elif abs(self.latitude) < 0.1:
-                    # At or very near equator: Always face North to avoid equinox flips
-                    # (Sun passes overhead at equinoxes, orientation doesn't matter much)
-                    phi_c_el_track = 0
+                # A) Determine optimal azimuth (Dynamically choose North or South)
+                # The tracker can swing to face either North (0°) or South (180°).
+                # We choose the orientation that has the sun in its front-facing hemisphere.
+                phi_s_rad = np.radians(phi_s)
+                cos_phi_s = np.cos(phi_s_rad)
+                
+                if cos_phi_s >= 0:
+                    phi_c_el_track = 0  # Sun is in Northern sky -> Face North
                 else:
-                    # Inside tropics (but not at equator): Determine from declination
-                    if self.latitude < 0:
-                        # Southern Hemisphere
-                        if delta > 0 and abs(delta) > abs(self.latitude):
-                            phi_c_el_track = 0  # Sun in Northern sky → Face North
-                        else:
-                            phi_c_el_track = 180  # Sun in Southern sky → Face South
-                    else:
-                        # Northern Hemisphere
-                        if delta < 0 and abs(delta) > abs(self.latitude):
-                            phi_c_el_track = 180  # Sun in Southern sky → Face South
-                        else:
-                            phi_c_el_track = 0  # Sun in Northern sky → Face North
+                    phi_c_el_track = 180 # Sun is in Southern sky -> Face South
                 
-                # Panel tilt tracks the complement of elevation angle
-                sigma_el_track = 90 - beta
+                # B) Calculate Optimized Tilt (Trigonometric Optimum)
+                # For a fixed azimuth, the tilt (sigma) that minimizes AOI is:
+                # tan(sigma_opt) = cos(phi_s - phi_c) / tan(beta)
+                beta_rad = np.radians(beta)
+                rel_az_rad = np.radians(phi_s - phi_c_el_track)
                 
-                Ic_1axis_el, cos_theta_1axis_el = self.calculate_incident_irradiance(beta, phi_s, sigma_el_track, phi_c_el_track, Ib, C)
-                res_1axis_el = self.calculate_pv_performance(Ic_1axis_el, cos_theta_1axis_el, T_amb=T_amb, efficiency=efficiency)
+                # Use a small epsilon to avoid division by zero near sunset/sunrise
+                tan_beta = np.tan(beta_rad)
+                if tan_beta > 0.001:
+                    # By our dynamic azimuth choice above, cos(rel_az) will always be >= 0
+                    cos_rel_az = np.cos(rel_az_rad)
+                    sigma_el_track = np.degrees(np.arctan(cos_rel_az / tan_beta))
+                else:
+                    # Near horizon, flatten out
+                    sigma_el_track = 0
+                
+                # Clamp tilt to stay between 0 and 90
+                sigma_el_track = np.clip(sigma_el_track, 0, 90)
+                
+                Ibc_1axis_el, Idc_1axis_el, cos_theta_1axis_el = self.calculate_incident_irradiance(beta, phi_s, sigma_el_track, phi_c_el_track, Ib_incident, C, Ib_atmos=Ib_atmos)
+                res_1axis_el = self.calculate_pv_performance(Ibc_1axis_el, Idc_1axis_el, cos_theta_1axis_el, T_amb=T_amb, efficiency=efficiency)
+                
+                # Total Ic for reporting
+                Ic_1axis_el = Ibc_1axis_el + Idc_1axis_el
                 loss_shading_1axis_el += delta_Ib * max(0, cos_theta_1axis_el) * efficiency
                 
                 # --- Mode 4: 2-Axis Tracking ---
                 # Panel always points directly at the sun
                 # Beam irradiance: Ic_beam = DNI (since cos(theta) = 1)
-                Ibc_2axis = Ib 
                 
                 # Diffuse and ground-reflected irradiance
                 # When panel points at sun: sigma (panel tilt from horizontal) = 90 - beta
@@ -1062,12 +1107,15 @@ class SolarModel:
                 # For ground-reflected: (1 - cos(sigma))/2 = (1 - sin(beta))/2
                 
                 sin_beta = np.sin(np.radians(beta))
-                Idc_2axis = C * Ib * (1 + sin_beta) / 2
-                Irc_2axis = 0.2 * Ib * (sin_beta + C) * (1 - sin_beta) / 2
-                Ic_2axis = Ibc_2axis + Idc_2axis + Irc_2axis
+                # Diffuse and ground-reflected irradiance (Atmospheric)
+                Idc_2axis = C * Ib_atmos * (1 + sin_beta) / 2
+                Irc_2axis = 0.2 * Ib_atmos * (sin_beta + C) * (1 - sin_beta) / 2
+                # Total Ic (Shaded Beam + Atmosphere-driven Diffuse/Reflected)
+                Ic_2axis = Ib_incident + Idc_2axis + Irc_2axis
                 
-                # For 2-axis, cos_theta is always 1 (perfect tracking)
-                res_2axis = self.calculate_pv_performance(Ic_2axis, 1.0, T_amb=T_amb, efficiency=efficiency)
+                # For 2-axis, cos_theta is always 1 (perfect tracking). 
+                # We apply IAM to the beam (even though IAM(1)=1 usually)
+                res_2axis = self.calculate_pv_performance(Ib_incident, (Idc_2axis + Irc_2axis), 1.0, T_amb=T_amb, efficiency=efficiency)
                 loss_shading_2axis += delta_Ib * 1.0 * efficiency
                 
                 # --- Mode 5: 1-Axis Polar (Hour Angle) Tracking ---
@@ -1188,7 +1236,13 @@ class SolarModel:
                     beta_c_polar = 0
                     phi_c_polar = 0
                     cos_theta_polar = 0
-                    Ic_polar = 0 # Initialize here
+                    Ic_polar = 0 
+                    # Initialize default results for face-down case
+                    res_polar = {
+                        'P_out': 0, 'P_at_25C': 0, 'P_cooled': 0, 
+                        'Loss_Angular': 0, 'Loss_Thermal': 0, 'T_cell': T_amb,
+                        'Cooling_Benefit': 0
+                    }
                 else:
                     beta_c_polar = np.degrees(np.arcsin(n_rot_z))
                     
@@ -1200,9 +1254,12 @@ class SolarModel:
                     phi_c_polar = np.degrees(np.arctan2(n_rot_x, n_rot_y))
                     
                     # Calculate Incidence
-                    Ic_polar, cos_theta_polar = self.calculate_incident_irradiance(beta, phi_s, beta_c_polar, phi_c_polar, Ib, C)
+                    Ibc_polar, Idc_polar, cos_theta_polar = self.calculate_incident_irradiance(beta, phi_s, beta_c_polar, phi_c_polar, Ib_incident, C, Ib_atmos=Ib_atmos)
+                    res_polar = self.calculate_pv_performance(Ibc_polar, Idc_polar, cos_theta_polar, T_amb=T_amb, efficiency=efficiency)
+                    
+                    # Total Ic for reporting
+                    Ic_polar = Ibc_polar + Idc_polar
 
-                res_polar = self.calculate_pv_performance(Ic_polar, cos_theta_polar, T_amb=T_amb, efficiency=efficiency)
                 loss_shading_1axis_polar += delta_Ib * max(0, cos_theta_polar) * efficiency
                 
                 # --- Mode 9: 1-Axis Horizontal (New) ---
@@ -1255,6 +1312,12 @@ class SolarModel:
                     phi_c_horiz = 0
                     cos_theta_1axis_horiz = 0
                     Ic_horiz_track = 0
+                    # Initialize default results for face-down case
+                    res_horiz_track = {
+                        'P_out': 0, 'P_at_25C': 0, 'P_cooled': 0, 
+                        'Loss_Angular': 0, 'Loss_Thermal': 0, 'T_cell': T_amb,
+                        'Cooling_Benefit': 0
+                    }
                 else:
                     # Panel tilt from horizontal = 90° - elevation of normal
                     # n_rot_z = sin(elevation), so elevation = arcsin(n_rot_z)
@@ -1262,32 +1325,67 @@ class SolarModel:
                     sigma_horiz = 90.0 - np.degrees(np.arcsin(np.clip(n_rot_z_h, -1, 1)))
                     phi_c_horiz = np.degrees(np.arctan2(n_rot_x_h, n_rot_y_h))
                     
-                    Ic_horiz_track, cos_theta_1axis_horiz = self.calculate_incident_irradiance(beta, phi_s, sigma_horiz, phi_c_horiz, Ib, C)
+                    Ibc_horiz_track, Idc_horiz_track, cos_theta_1axis_horiz = self.calculate_incident_irradiance(beta, phi_s, sigma_horiz, phi_c_horiz, Ib_incident, C, Ib_atmos=Ib_atmos)
+                    res_horiz_track = self.calculate_pv_performance(Ibc_horiz_track, Idc_horiz_track, cos_theta_1axis_horiz, T_amb=T_amb, efficiency=efficiency)
                     
-                res_horiz_track = self.calculate_pv_performance(Ic_horiz_track, cos_theta_1axis_horiz, T_amb=T_amb, efficiency=efficiency)
+                    # Total Ic for reporting
+                    Ic_horiz_track = Ibc_horiz_track + Idc_horiz_track
+                    
                 loss_shading_1axis_horiz += delta_Ib * max(0, cos_theta_1axis_horiz) * efficiency
                 
-                # --- Mode 6: Fixed Custom (Optional) ---
-                res_fixed = None
-                if fixed_tilt is not None and fixed_azimuth is not None:
-                    Ic_fixed, cos_theta_fixed = self.calculate_incident_irradiance(beta, phi_s, fixed_tilt, fixed_azimuth, Ib, C)
-                    res_fixed = self.calculate_pv_performance(Ic_fixed, cos_theta_fixed, T_amb=T_amb, efficiency=efficiency)
-                    loss_shading_fixed += delta_Ib * max(0, cos_theta_fixed) * efficiency
+                # --- Mode 6: Fixed Custom (Multi-Array supported) ---
+                sum_Ic_fixed = 0
+                sum_P_fixed = 0
+                sum_P_fixed_25C = 0
+                sum_T_cell_fixed = 0
+                sum_Loss_Ang_fixed = 0
+                sum_Loss_Therm_fixed = 0
+                sum_Loss_Shading_fixed = 0
+                
+                for arr in active_fixed_arrays:
+                    weight = arr['capacity_kw'] / total_fixed_capacity
+                    Ibc_a, Idc_a, cos_theta_a = self.calculate_incident_irradiance(beta, phi_s, arr['tilt'], arr['azimuth'], Ib_incident, C, Ib_atmos=Ib_atmos)
+                    res_a = self.calculate_pv_performance(Ibc_a, Idc_a, cos_theta_a, T_amb=T_amb, efficiency=efficiency)
+                    
+                    Ic_a = Ibc_a + Idc_a
+                    
+                    sum_Ic_fixed += Ic_a * weight
+                    sum_P_fixed += res_a['P_out'] * weight
+                    sum_P_fixed_25C += res_a['P_at_25C'] * weight
+                    sum_T_cell_fixed += res_a['T_cell'] * weight
+                    sum_Loss_Ang_fixed += res_a['Loss_Angular'] * weight
+                    sum_Loss_Therm_fixed += res_a['Loss_Thermal'] * weight
+                    # Shading loss for this orientation
+                    loss_a = (delta_Ib * max(0, cos_theta_a) * efficiency)
+                    sum_Loss_Shading_fixed += loss_a * weight
+
+                # Store aggregated results
+                Ic_fixed = sum_Ic_fixed
+                res_fixed = {
+                    'T_cell': sum_T_cell_fixed,
+                    'P_out': sum_P_fixed,
+                    'P_at_25C': sum_P_fixed_25C,
+                    'Loss_Angular': sum_Loss_Ang_fixed,
+                    'Loss_Thermal': sum_Loss_Therm_fixed
+                }
+                loss_shading_fixed += sum_Loss_Shading_fixed
                     
                 # --- Mode 7: Fixed East-West (Dual Panel) ---
-                # Two panels, both tilted 45 deg.
+                # Two panels, both tilted 10 deg.
                 # Panel A: Azimuth 90 (East). Panel B: Azimuth 270 (West).
                 # System Yield is average of both (assuming 50/50 capacity split).
                 
-                tilt_ew = 45
+                tilt_ew = 10
                 az_e = 90
                 az_w = 270
                 
-                Ic_e, cos_theta_e = self.calculate_incident_irradiance(beta, phi_s, tilt_ew, az_e, Ib, C)
-                res_e = self.calculate_pv_performance(Ic_e, cos_theta_e, T_amb=T_amb, efficiency=efficiency)
+                Ibc_e, Idc_e, cos_theta_e = self.calculate_incident_irradiance(beta, phi_s, tilt_ew, az_e, Ib_incident, C, Ib_atmos=Ib_atmos)
+                res_e = self.calculate_pv_performance(Ibc_e, Idc_e, cos_theta_e, T_amb=T_amb, efficiency=efficiency)
+                Ic_e = Ibc_e + Idc_e
                 
-                Ic_w, cos_theta_w = self.calculate_incident_irradiance(beta, phi_s, tilt_ew, az_w, Ib, C)
-                res_w = self.calculate_pv_performance(Ic_w, cos_theta_w, T_amb=T_amb, efficiency=efficiency)
+                Ibc_w, Idc_w, cos_theta_w = self.calculate_incident_irradiance(beta, phi_s, tilt_ew, az_w, Ib_incident, C, Ib_atmos=Ib_atmos)
+                res_w = self.calculate_pv_performance(Ibc_w, Idc_w, cos_theta_w, T_amb=T_amb, efficiency=efficiency)
+                Ic_w = Ibc_w + Idc_w
                 
                 # Average for System Stats (per m2 of installed capacity)
                 Ic_ew = (Ic_e + Ic_w) / 2
@@ -1296,18 +1394,20 @@ class SolarModel:
                 Loss_Therm_ew = (res_e['Loss_Thermal'] + res_w['Loss_Thermal']) / 2
                 
                 # --- Mode 8: Fixed North-South (Dual Panel) ---
-                # Two panels, both tilted 45 deg.
+                # Two panels, both tilted 10 deg.
                 # Panel A: Azimuth 0 (North). Panel B: Azimuth 180 (South).
                 
-                tilt_ns = 45
+                tilt_ns = 10
                 az_n = 0
                 az_s = 180
                 
-                Ic_n, cos_theta_n = self.calculate_incident_irradiance(beta, phi_s, tilt_ns, az_n, Ib, C)
-                res_n = self.calculate_pv_performance(Ic_n, cos_theta_n, T_amb=T_amb, efficiency=efficiency)
+                Ibc_n, Idc_n, cos_theta_n = self.calculate_incident_irradiance(beta, phi_s, tilt_ns, az_n, Ib_incident, C, Ib_atmos=Ib_atmos)
+                res_n = self.calculate_pv_performance(Ibc_n, Idc_n, cos_theta_n, T_amb=T_amb, efficiency=efficiency)
+                Ic_n = Ibc_n + Idc_n
                 
-                Ic_s, cos_theta_s = self.calculate_incident_irradiance(beta, phi_s, tilt_ns, az_s, Ib, C)
-                res_s = self.calculate_pv_performance(Ic_s, cos_theta_s, T_amb=T_amb, efficiency=efficiency)
+                Ibc_s, Idc_s, cos_theta_s = self.calculate_incident_irradiance(beta, phi_s, tilt_ns, az_s, Ib_incident, C, Ib_atmos=Ib_atmos)
+                res_s = self.calculate_pv_performance(Ibc_s, Idc_s, cos_theta_s, T_amb=T_amb, efficiency=efficiency)
+                Ic_s = Ibc_s + Idc_s
                 
                 # Average for System Stats
                 Ic_ns = (Ic_n + Ic_s) / 2
@@ -1323,7 +1423,7 @@ class SolarModel:
                     'HourAngle_deg': geom['hour_angle'],
                     'Elevation_deg': geom['elevation'],
                     'Azimuth_deg': geom['azimuth'],
-                    'DNI_W_m2': Ib,
+                    'DNI_W_m2': Ib_atmos, # Use Atmospheric DNI for reporting
                     'GHI_W_m2': irrad['global_horizontal'],
                     
                     # Temperature
@@ -1407,7 +1507,7 @@ class SolarModel:
                         'P_Fixed_25C': res_fixed['P_at_25C'],
                         'Loss_Ang_Fixed_W_m2': res_fixed['Loss_Angular'],
                         'Loss_Therm_Fixed_W_m2': res_fixed['Loss_Thermal'],
-                        'Loss_Shading_Fixed_W_m2': delta_Ib * max(0, cos_theta_fixed) * efficiency,
+                        'Loss_Shading_Fixed_W_m2': sum_Loss_Shading_fixed,
                     })
                 
                 data.append(row)
@@ -1476,17 +1576,15 @@ class SolarModel:
             'Annual_Loss_Shading_Fixed_kWh_m2': loss_shading_fixed * time_step_hours / 1000,
         }
         
-        # Fixed Custom Totals (if calculated)
-        if fixed_tilt is not None:
-             totals['Annual_I_Fixed_kWh_m2'] = (df['I_Fixed_W_m2'].sum() * time_step_hours) / 1000
-             totals['Annual_Yield_Fixed_kWh_m2'] = (df['P_Fixed'].sum() * time_step_hours) / 1000
-             totals['Annual_Yield_Cooled_Fixed_kWh_m2'] = (df['P_Fixed_25C'].sum() * time_step_hours) / 1000
-             totals['Annual_Loss_Ang_Fixed_kWh_m2'] = (df['Loss_Ang_Fixed_W_m2'].sum() * time_step_hours) / 1000
-             totals['Annual_Loss_Therm_Fixed_kWh_m2'] = (df['Loss_Therm_Fixed_W_m2'].sum() * time_step_hours) / 1000
-             totals['Annual_Loss_Shading_Fixed_kWh_m2'] = loss_shading_fixed * time_step_hours / 1000
-        else:
-             totals['Annual_Yield_Fixed_kWh_m2'] = 0
-             totals['Annual_Yield_Cooled_Fixed_kWh_m2'] = 0
+        # Fixed Custom Totals (Always return results using the resolved defaults)
+        totals['Annual_I_Fixed_kWh_m2'] = (df['I_Fixed_W_m2'].sum() * time_step_hours) / 1000
+        totals['Annual_Yield_Fixed_kWh_m2'] = (df['P_Fixed'].sum() * time_step_hours) / 1000
+        totals['Annual_Yield_Cooled_Fixed_kWh_m2'] = (df['P_Fixed_25C'].sum() * time_step_hours) / 1000
+        totals['Annual_Loss_Ang_Fixed_kWh_m2'] = (df['Loss_Ang_Fixed_W_m2'].sum() * time_step_hours) / 1000
+        totals['Annual_Loss_Therm_Fixed_kWh_m2'] = (df['Loss_Therm_Fixed_W_m2'].sum() * time_step_hours) / 1000
+        totals['Annual_Loss_Shading_Fixed_kWh_m2'] = loss_shading_fixed * time_step_hours / 1000
+        totals['Fixed_Custom_Tilt'] = tilt_fixed
+        totals['Fixed_Custom_Azimuth'] = azimuth_fixed
         
         # Constants for CF Calculation
         total_hours = 8760
