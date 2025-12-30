@@ -1574,6 +1574,9 @@ class SolarModel:
             'Annual_Loss_Shading_1Axis_Elevation_kWh_m2': loss_shading_1axis_el * time_step_hours / 1000,
             'Annual_Loss_Shading_2Axis_kWh_m2': loss_shading_2axis * time_step_hours / 1000,
             'Annual_Loss_Shading_Fixed_kWh_m2': loss_shading_fixed * time_step_hours / 1000,
+            
+            # Daylight Hours (Sum of time steps where elevation > 0)
+            'Daylight_Hours': daylight_hours_count
         }
         
         # Fixed Custom Totals (Always return results using the resolved defaults)

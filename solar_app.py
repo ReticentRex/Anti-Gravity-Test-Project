@@ -1746,12 +1746,23 @@ elif st.session_state['user_mode'] == 'Advanced':
     latitude = st.sidebar.number_input("Latitude (deg)", value=-32.05, min_value=-90.0, max_value=90.0, step=0.01, help="Positive for North, Negative for South")
     longitude = st.sidebar.number_input("Longitude (deg)", value=115.89, min_value=-180.0, max_value=180.0, step=0.01, help="Positive for East, Negative for West")
     
+    # --- PV System Configuration ---
+    st.sidebar.markdown("---")
+    st.sidebar.header("🔧 PV System Configuration")
+    
+    # Generic Params
+    system_capacity_kw = st.sidebar.number_input("System Capacity (kW)", value=5.0, min_value=0.1, step=0.1, help="Total rated DC power of the solar array.")
+    efficiency_percent = st.sidebar.number_input("Panel Efficiency (%)", value=20.0, min_value=1.0, max_value=50.0, step=0.5)
+    panel_stc_w = st.sidebar.number_input("Single Panel Power (W)", value=400.0, min_value=10.0, step=10.0)
+    is_bifacial = st.sidebar.checkbox("Bifacial Panels", value=False, help="Enable for panels that harvest reflected light from the rear side (albedo).")    
+    
     # Initialize session state for Fixed Arrays
     if 'fixed_arrays' not in st.session_state:
         st.session_state['fixed_arrays'] = []
-        
+
     st.sidebar.markdown("---")
-    st.sidebar.header("🔧 Fixed Panel Settings")
+    st.sidebar.markdown("**Detailed Array Configuration**")
+
     enable_custom_fixed = st.sidebar.checkbox(
         "Enable Custom Fixed Panel Settings", 
         value=False,
@@ -1761,7 +1772,7 @@ elif st.session_state['user_mode'] == 'Advanced':
     if enable_custom_fixed:
         # Toggle for kW vs Modules
         input_mode = st.sidebar.radio("Capacity Input Mode", ["kW (Rated Power)", "Number of Modules"], horizontal=True)
-        panel_stc_w = st.session_state.get('panel_stc_w', 400.0) # Fallback if module params not processed yet
+        # panel_stc_w inherited from top inputs
         
         # Display current arrays
         if len(st.session_state['fixed_arrays']) > 0:
@@ -1824,20 +1835,262 @@ elif st.session_state['user_mode'] == 'Advanced':
             fixed_tilt = 32.0; fixed_azimuth = 0.0
     else:
         # Default single array setting (simple mode)
-        system_capacity_kw = st.sidebar.number_input("System Rated Power (kW)", min_value=0.1, value=5.0, step=0.1, help="Total installer capacity for the default latitude-tilted array.")
+        # Use system_capacity_kw from top inputs
         fixed_tilt = None
         fixed_azimuth = None
         
     # Resolved display values for visualization and info text
     disp_tilt = abs(latitude) if fixed_tilt is None else fixed_tilt
     disp_azimuth = (0.0 if latitude < 0 else 180.0) if fixed_azimuth is None else fixed_azimuth
-
+    # --- Grid Import Rates Configuration ---
     st.sidebar.markdown("---")
-    st.sidebar.header("⚡ PV Module Parameters")
-    efficiency_percent = st.sidebar.number_input("Module Efficiency (%)", value=14.0, min_value=1.0, max_value=50.0, step=0.1, help="Standard Test Conditions (STC) Efficiency")
-    panel_stc_w = st.sidebar.number_input("Panel STC Power (W)", value=400.0, min_value=10.0, max_value=1000.0, step=10.0, help="Standard Test Conditions power per panel.")
-    st.session_state['panel_stc_w'] = panel_stc_w
-    # system_capacity_kw moved to Fixed Panel Settings
+    st.sidebar.header("💰 Grid Import Rates")
+    
+    price_mode = st.sidebar.radio("Import Rate Mode", ["Flat Rate", "Time of Day"], horizontal=True)
+    
+    # Daily Supply Charge
+    daily_supply_charge = st.sidebar.number_input("Daily Supply Charge ($/day)", min_value=0.0, value=0.00, step=0.05, help="Fixed daily connection fee charged by utility.")
+    
+    energy_config = {
+        'mode': price_mode,
+        'flat_rate': 0.0,
+        'supply_charge': daily_supply_charge,
+        'tod_schedule': [] # list of dicts: {'start': int, 'end': int, 'rate': float} 0-23h
+    }
+    
+    if price_mode == "Flat Rate":
+        flat_rate = st.sidebar.number_input("Electricity Import Rate ($/kWh)", min_value=0.0, value=0.10, step=0.01, format="%.3f")
+        energy_config['flat_rate'] = flat_rate
+    
+    else: # Time of Day
+        st.sidebar.caption("Define time ranges (0-24h). Times cannot overlap.")
+        
+        # Helper to parse time inputs
+        import datetime
+        
+        def format_time(h):
+            return f"{int(h):02d}:00"
+            
+        rate_types = ['Peak', 'Shoulder', 'Off-Peak']
+        tod_inputs = [] # Store raw inputs to validate
+        
+        for r_type in rate_types:
+            with st.sidebar.expander(f"{r_type} Rates", expanded=(r_type=='Peak')):
+                rate_cost = st.number_input(f"{r_type} Price ($/kWh)", min_value=0.0, value=0.15 if r_type=='Peak' else (0.10 if r_type=='Shoulder' else 0.05), step=0.01, format="%.3f", key=f"rate_{r_type}")
+                
+                # Dynamic number of ranges (1 or 2)
+                # We can just show 2 slots, if second is empty/same-as-start, ignore it.
+                # Actually, strictly 2 slots is easier.
+                
+                for i in range(2):
+                    c1, c2 = st.columns(2)
+                    with c1:
+                        t_start = st.number_input(f"Start {i+1} (h)", min_value=0, max_value=24, value=0, key=f"t_start_{r_type}_{i}")
+                    with c2:
+                        t_end = st.number_input(f"End {i+1} (h)", min_value=0, max_value=24, value=0, key=f"t_end_{r_type}_{i}")
+                    
+                    if t_end > t_start:
+                        tod_inputs.append({
+                            'label': f"{r_type} #{i+1}",
+                            'start': t_start,
+                            'end': t_end,
+                            'rate': rate_cost
+                        })
+        
+        # Validate Overlaps
+        # Sort by start time
+        tod_inputs.sort(key=lambda x: x['start'])
+        
+        has_overlap = False
+        overlap_msg = ""
+        
+        for i in range(len(tod_inputs) - 1):
+            curr = tod_inputs[i]
+            next_seg = tod_inputs[i+1]
+            
+            # Check overlap: Start of next < End of current
+            if next_seg['start'] < curr['end']:
+                has_overlap = True
+                overlap_msg = f"Overlap detected between {curr['label']} ({curr['start']}-{curr['end']}) and {next_seg['label']} ({next_seg['start']}-{next_seg['end']})"
+                break
+        
+        if has_overlap:
+            st.sidebar.error(f"⚠️ {overlap_msg}")
+            energy_config['tod_schedule'] = [] # Invalid
+        else:
+            energy_config['tod_schedule'] = tod_inputs
+            # Visualization of schedule (mini bar)
+            if tod_inputs:
+                st.sidebar.markdown("**Schedule Preview:**")
+                # Create a simple visual: 24h bar
+                # Use HTML/CSS gradient? Or just text summary
+                summary = []
+                for seg in tod_inputs:
+                    summary.append(f"{seg['start']}h-{seg['end']}h: ${seg['rate']:.2f}")
+                st.sidebar.caption(", ".join(summary))
+
+    
+    st.session_state['energy_config'] = energy_config
+
+    
+    # --- System Cost Configuration ---
+    st.sidebar.markdown("---")
+    st.sidebar.header("💰 System Cost Parameters")
+    
+    with st.sidebar.expander("System CAPEX Settings", expanded=False):
+        st.sidebar.caption("Define the initial capital cost of the system.")
+        
+        cost_mode = st.radio("Cost Input Mode", ["Turnkey Total", "Detailed Breakdown"])
+        
+        capex_data = {
+           'modules': 0.0,
+           'inverter': 0.0,
+           'racking': 0.0,
+           'labor': 0.0,
+           'bos': 0.0,
+           'turnkey': 0.0
+        }
+        
+        if cost_mode == "Turnkey Total":
+            turnkey_cost = st.number_input("Total System Cost ($)", min_value=1.0, value=5000.0, step=100.0, help="Total installed cost (PV modules, inverter, racking, labor).")
+            capex_data['turnkey'] = turnkey_cost
+        else: # Detailed
+            st.caption("Enter component costs ($):")
+            c_mod = st.number_input("PV Modules", min_value=0.0, value=2000.0, step=50.0)
+            c_inv = st.number_input("Inverter/Microinverters", min_value=0.0, value=1500.0, step=50.0)
+            c_rack = st.number_input("Racking & Mounting", min_value=0.0, value=500.0, step=25.0, help="For standard fixed systems.")
+            c_lab = st.number_input("Labor & Installation", min_value=0.0, value=1000.0, step=50.0)
+            c_bos = st.number_input("Balance of System (BoS)", min_value=0.0, value=200.0, step=25.0, help="Wiring, conduit, permits, etc.")
+            
+            capex_data.update({
+                'modules': c_mod, 'inverter': c_inv, 'racking': c_rack, 'labor': c_lab, 'bos': c_bos,
+                'turnkey': c_mod+c_inv+c_rack+c_lab+c_bos
+            })
+            st.markdown(f"**Total:** ${capex_data['turnkey']:,.2f}")
+
+    cost_params = {
+        'mode': cost_mode,
+        'capex': capex_data
+        # No OPEX inputs as per instruction
+    }
+    st.session_state['cost_params'] = cost_params
+    
+    # --- Battery Energy Storage (BESS) ---
+    st.sidebar.markdown("---")
+    st.sidebar.header("🔋 Battery Storage (BESS)")
+    enable_bess = st.sidebar.checkbox("Enable Battery Electrical Storage System", value=False)
+    
+    bess_params = {'enabled': False, 'capacity_kwh': 0.0, 'cost': 0.0}
+    
+    if enable_bess:
+        bess_cap = st.sidebar.number_input("Installed Capacity (kWh)", min_value=0.1, value=10.0, step=0.5)
+        bess_cost = st.sidebar.number_input("Total Battery Cost ($)", min_value=0.0, value=5000.0, step=100.0, help="Turnkey cost including inverter/installation.")
+        bess_params.update({'enabled': True, 'capacity_kwh': bess_cap, 'cost': bess_cost})
+        
+    st.session_state['bess_params'] = bess_params
+    
+    # --- Demand & Usage Profile ---
+    st.sidebar.markdown("---")
+    st.sidebar.header("🏠 Demand & Usage Profile")
+    enable_demand = st.sidebar.checkbox("Enable Demand Profile", value=False)
+    
+    if 'appliances' not in st.session_state:
+        st.session_state['appliances'] = []
+        
+    if enable_demand:
+        st.sidebar.caption("Define appliances to simulate household load.")
+        
+        with st.sidebar.expander("Add New Appliance"):
+            app_name = st.text_input("Appliance Name", value="Air Conditioner")
+            app_power = st.number_input("Rated Power (kW)", min_value=0.01, value=2.0, step=0.1)
+            
+            st.markdown("Run Schedule:")
+            c1, c2 = st.columns(2)
+            with c1:
+                app_start = st.number_input("Start Hour (0-23)", min_value=0, max_value=23, value=18)
+            with c2:
+                app_duration = st.number_input("Duration (hrs)", min_value=1, max_value=24, value=4)
+                
+            if st.button("Add Appliance"):
+                # Validate overlap for same name? 
+                # For simplicity, allow multiple entries. User can manage logic.
+                # Actually user requested overlap prevention for SAME appliance.
+                
+                # Check bounds
+                if app_start + app_duration > 24:
+                    st.error("Schedule exceeds 24h cycle.")
+                else:
+                    # Check overlap with existing entries of same name
+                    collision = False
+                    for existing in st.session_state['appliances']:
+                        if existing['name'] == app_name:
+                             # Simple overlap check: (StartA < EndB) and (EndA > StartB)
+                            e_start = existing['start']
+                            e_end = e_start + existing['duration']
+                            new_end = app_start + app_duration
+                            
+                            if (app_start < e_end) and (new_end > e_start):
+                                collision = True
+                                break
+                    
+                    if collision:
+                        st.error(f"'{app_name}' is already running during this time!")
+                    else:
+                        st.session_state['appliances'].append({
+                            'name': app_name,
+                            'power': app_power,
+                            'start': app_start,
+                            'duration': app_duration
+                        })
+                        st.success(f"Added {app_name}")
+
+        # Display List
+        if st.session_state['appliances']:
+            st.sidebar.markdown("**Active Appliances:**")
+            to_remove = []
+            for idx, app in enumerate(st.session_state['appliances']):
+                col_txt, col_del = st.sidebar.columns([0.8, 0.2])
+                with col_txt:
+                    st.markdown(f"**{app['name']}** ({app['power']}kW): {app['start']}h - {app['start']+app['duration']}h")
+                with col_del:
+                    if st.button("❌", key=f"del_app_{idx}"):
+                        to_remove.append(idx)
+            
+            if to_remove:
+                # Remove in reverse order
+                for i in sorted(to_remove, reverse=True):
+                    del st.session_state['appliances'][i]
+                st.rerun()
+                
+            if st.sidebar.button("Clear All Appliances"):
+                st.session_state['appliances'] = []
+                st.rerun()
+    
+    # Initialize session state for Fixed Arrays
+    if 'fixed_arrays' not in st.session_state:
+        st.session_state['fixed_arrays'] = []
+        
+    
+    # --- Vehicle Integration ---
+    st.sidebar.markdown("---")
+    st.sidebar.header("🚗 Vehicle Integration")
+    enable_vehicle = st.sidebar.checkbox("Enable Vehicle Drive Cycle", value=False)
+    
+    drive_cycle = []
+    if enable_vehicle:
+        st.sidebar.info("ASSUMPTION: Vehicle is PARKED outside (subject to shading) during all non-driving hours.")
+        
+        zones = ['Bumper to Bumper', 'Suburban', 'Highway']
+        for z in zones:
+            with st.sidebar.expander(f"{z} Zone"):
+                z_start = st.number_input(f"Start Time (h)", min_value=0, max_value=23, value=8, key=f"d_start_{z}")
+                z_dur = st.number_input(f"Duration (h)", min_value=0.0, max_value=24.0, value=0.0, step=0.5, key=f"d_dur_{z}")
+                
+                if z_dur > 0:
+                    drive_cycle.append({'zone': z, 'start': z_start, 'duration': z_dur})
+    
+
+
 
     st.sidebar.markdown("---")
     st.sidebar.header("🌳 Shading/Obstruction Map")
@@ -2004,12 +2257,34 @@ elif st.session_state['user_mode'] == 'Advanced':
             st.session_state['totals'] = totals
             st.session_state['df_hourly'] = df_hourly  # This is 5-minute resolution data
             st.session_state['analytics'] = analytics
+            
+            # SNAPSHOT all input parameters for consistent display
+            # This ensures results don't change until 'Run Simulation' is clicked
+            st.session_state['sim_params'] = {
+                'latitude': latitude,
+                'longitude': longitude,
+                'system_capacity_kw': system_capacity_kw,
+                'efficiency_percent': efficiency_percent,
+                'panel_stc_w': panel_stc_w,
+                'fixed_tilt': disp_tilt, # Use resolvd display tilt
+                'fixed_azimuth': disp_azimuth, # Use resolved display azimuth
+                'fixed_arrays': st.session_state.get('fixed_arrays', []),
+                'obstructions': st.session_state.get('obstructions', []) if st.session_state.get('enable_shading', False) else [],
+                'energy_config': st.session_state.get('energy_config'), # Snapshot pricing
+                'economics': st.session_state.get('cost_params'), # Snapshot economic inputs
+                'is_bifacial': is_bifacial,
+                'bess': st.session_state.get('bess_params'),
+                'demand': st.session_state.get('appliances', []),
+                'vehicle': drive_cycle
+            }
+            
             st.session_state['sim_viz_params'] = {
-                # tracker_type now driven by live selector in dashboard
+                # specific viz params can just alias sim_params or point to them
+                'latitude': latitude,
+                'longitude': longitude,
                 'fixed_tilt': disp_tilt,
                 'fixed_azimuth': disp_azimuth,
-                'fixed_arrays': st.session_state.get('fixed_arrays', []),
-                'obstructions': st.session_state.get('obstructions', []) if st.session_state.get('enable_shading', False) else []
+                'obstructions': st.session_state['sim_params']['obstructions']
             }
             st.session_state['run_simulation'] = True
 
@@ -2021,10 +2296,19 @@ elif st.session_state['user_mode'] == 'Advanced':
         optimize_electrical = st.session_state.get('optimize_electrical', False)
         df_hourly = st.session_state.get('df_hourly')
         
+        # Retrieve Frozen Parameters
+        sim_params = st.session_state.get('sim_params', {})
+        # Fallback to current if missing (shouldn't happen if run_simulation is True)
+        s_latitude = sim_params.get('latitude', latitude)
+        s_fixed_tilt = sim_params.get('fixed_tilt', fixed_tilt)
+        s_fixed_azimuth = sim_params.get('fixed_azimuth', fixed_azimuth)
+        s_system_capacity_kw = sim_params.get('system_capacity_kw', system_capacity_kw)
+        s_efficiency_percent = sim_params.get('efficiency_percent', efficiency_percent)
+        
         # Define Metric Columns with detailed tooltips
         tracker_tooltips = {
             'Horizontal': 'Panel lies flat on the ground (0° tilt). Simple but inefficient.',
-            'Fixed Tilt': f'Panel fixed at {fixed_tilt}° tilt, {fixed_azimuth}° azimuth. No moving parts.',
+            'Fixed Tilt': f'Panel fixed at {s_fixed_tilt}° tilt, {s_fixed_azimuth}° azimuth. No moving parts.',
             'Fixed E-W': 'Two panels at 10° tilt facing East (90°) and West (270°). Averages morning/evening production.',
             'Fixed N-S': 'Two panels at 10° tilt facing North (0°) and South (180°). Captures different sun paths.',
             '1-Axis Azimuth': 'Rotates East-West on a tilted axis to follow the sun\'s daily path. Panel tilt is optimized.',
@@ -2036,7 +2320,7 @@ elif st.session_state['user_mode'] == 'Advanced':
         
         metric_cols = [
             ('Horizontal', 'Annual_Yield_Horizontal_kWh_m2', 'Flat on the ground'),
-            ('Fixed Tilt', 'Annual_Yield_Fixed_kWh_m2', f'Fixed at {fixed_tilt}° tilt, {fixed_azimuth}° azimuth'),
+            ('Fixed Tilt', 'Annual_Yield_Fixed_kWh_m2', f'Fixed at {s_fixed_tilt}° tilt, {s_fixed_azimuth}° azimuth'),
             ('Fixed E-W', 'Annual_Yield_Fixed_EW_kWh_m2', 'Dual panels facing East and West'),
             ('Fixed N-S', 'Annual_Yield_Fixed_NS_kWh_m2', 'Dual panels facing North and South'),
             ('1-Axis Azimuth', 'Annual_Yield_1Axis_Azimuth_kWh_m2', 'Tracks sun East-West'),
@@ -2270,8 +2554,8 @@ elif st.session_state['user_mode'] == 'Advanced':
         st.info(f"""
         **Daylight Capacity Factor** reveals the system's efficiency specifically during sun-up hours. 
         
-        For your **{system_capacity_kw} kW** system, it is calculated as:  
-        `Daylight CF = (Annual Energy Yield) / ({system_capacity_kw} kW × Daylight Hours)`
+        For your **{s_system_capacity_kw} kW** system, it is calculated as:  
+        `Daylight CF = (Annual Energy Yield) / ({s_system_capacity_kw} kW × Daylight Hours)`
         
         This metric filters out night-time hours to show how effectively the tracking system captures available solar energy when it matters most.
         """)
@@ -2280,7 +2564,7 @@ elif st.session_state['user_mode'] == 'Advanced':
             st.info(f"""
             **Optimal Tilt Calculation:** The optimal angle of **{optimal_tilt:.0f}°** maximizes **annual electrical yield**, accounting for real-world thermal losses.
             
-            This is calculated by testing tilt angles from **{max(0, int(abs(latitude)) - 5)}° to {int(abs(latitude)) + 5}°** and finding which produces the most electricity over the year, including:
+            This is calculated by testing tilt angles from **{max(0, int(abs(s_latitude)) - 5)}° to {int(abs(s_latitude)) + 5}°** and finding which produces the most electricity over the year, including:
             - **Temperature effects** on panel efficiency (via NOCT and thermal loss model)
             - **Angular reflection losses** at different sun elevations
             - **Seasonal variation** in sun path and intensity
@@ -2291,9 +2575,9 @@ elif st.session_state['user_mode'] == 'Advanced':
             st.info(f"""
             **Optimal Tilt Calculation:** The optimal angle of **{optimal_tilt:.0f}°** maximizes **annual incident irradiance** on the panel surface.
             
-            This is calculated by testing tilt angles from **{max(0, int(abs(latitude)) - 5)}° to {int(abs(latitude)) + 5}°** and finding which receives the most total sunlight over the year.
+            This is calculated by testing tilt angles from **{max(0, int(abs(s_latitude)) - 5)}° to {int(abs(s_latitude)) + 5}°** and finding which receives the most total sunlight over the year.
             
-            Traditional "rules of thumb" suggest ~90% of latitude ({abs(latitude)*0.9:.1f}°), but this model accounts for:
+            Traditional "rules of thumb" suggest ~90% of latitude ({abs(s_latitude)*0.9:.1f}°), but this model accounts for:
             - **Angular reflection losses** at different sun elevations throughout the year
             - **Seasonal variation** in sun path and intensity
             
@@ -2303,13 +2587,13 @@ elif st.session_state['user_mode'] == 'Advanced':
         st.markdown("---")
 
         # --- Section 1.5: Total System Yield ---
-        st.header(f"⚡ Your {system_capacity_kw} kW System Annual Energy Yield")
+        st.header(f"⚡ Your {s_system_capacity_kw} kW System Annual Energy Yield")
         
-        # Calculate Array Area (m2) = Rated Power (kW) / Efficiency (kW/m2)
-        rated_power_per_m2 = efficiency_percent / 100.0
-        array_area_m2 = system_capacity_kw / rated_power_per_m2
+        # Calculate Array Area (m2) based on STORED params
+        rated_power_per_m2 = s_efficiency_percent / 100.0
+        array_area_m2 = s_system_capacity_kw / rated_power_per_m2 if rated_power_per_m2 > 0 else 0
         
-        st.markdown(f"Based on your **{efficiency_percent}%** efficient panels, your system requires approximately **{array_area_m2:.1f} m²** of active solar area.")
+        st.markdown(f"Based on your **{s_efficiency_percent}%** efficient panels, your system requires approximately **{array_area_m2:.1f} m²** of active solar area.")
         
         # Reference Yield for Delta (2-Axis)
         ref_yield_per_m2 = totals.get('Annual_Yield_2Axis_kWh_m2', 0)
@@ -2323,7 +2607,7 @@ elif st.session_state['user_mode'] == 'Advanced':
                     with sys_cols[j]:
                         yield_per_m2 = totals.get(key, 0)
                         
-                        if efficiency_percent > 0:
+                        if s_efficiency_percent > 0:
                             # Total energy = yield_per_m2 * area
                             total_energy_kwh = yield_per_m2 * array_area_m2
                             ref_total_energy = ref_yield_per_m2 * array_area_m2
@@ -2477,7 +2761,7 @@ elif st.session_state['user_mode'] == 'Advanced':
                             cooling_benefit_pct = 0
                         
                         # Calculate CF for cooled collectors
-                        rated_power_kw_m2 = efficiency_percent / 100.0
+                        rated_power_kw_m2 = s_efficiency_percent / 100.0
                         total_hours = 8760
                         daylight_hours = totals.get('Daylight_Hours', 4380)
                         
@@ -2535,8 +2819,8 @@ elif st.session_state['user_mode'] == 'Advanced':
 """, unsafe_allow_html=True)
         
         # Subsection 2: Annual System Yield
-        st.subheader(f"⚡ Your {system_capacity_kw} kW System Annual Energy Yield with Active Cooling (kWh)")
-        st.markdown(f"Based on your **{efficiency_percent}%** efficient panels, your system requires approximately **{array_area_m2:.1f} m²** of active solar area.")
+        st.subheader(f"⚡ Your {s_system_capacity_kw} kW System Annual Energy Yield with Active Cooling (kWh)")
+        st.markdown(f"Based on your **{s_efficiency_percent}%** efficient panels, your system requires approximately **{array_area_m2:.1f} m²** of active solar area.")
         
         # Display in a 3-column grid
         for i in range(0, len(metric_cols), 3):
@@ -2621,6 +2905,103 @@ elif st.session_state['user_mode'] == 'Advanced':
         st.markdown("---")
 
 
+        # --- Section 1.5: Self-Consumption Trade-off Analysis ---
+        st.header("⚖️ Self-Consumption Trade-off Analysis")
+        st.markdown(f"**System-Level Budget Analysis** for your **{s_system_capacity_kw} kW** array ({array_area_m2:.1f} m² active area).")
+        st.markdown("We calculate the **Total Allowable Energy Cost** for the entire system. If your equipment consumes less than this, it is net-positive.")
+        
+        # 1. Tracking Actuation Budget
+        # Reference: Fixed Tilt (South/North facing at optimal tilt is best, but Fixed Custom is our 'Fixed' slot)
+        baseline_yield = totals.get('Annual_Yield_Fixed_kWh_m2', 0)
+        
+        budget_data_tracking = []
+        budget_data_cooling = []
+
+        for label, metric_col, help_text in metric_cols:
+            yield_uncooled = totals.get(metric_col, 0)
+            
+            # --- 1. Tracking Budget (System Total) ---
+            if label not in ['Horizontal', 'Fixed Tilt', 'Fixed Custom', 'Fixed E-W', 'Fixed N-S']:
+                tracking_gain_kwh_m2 = max(0, yield_uncooled - baseline_yield)
+                # Scale to system size
+                tracking_gain_total = tracking_gain_kwh_m2 * array_area_m2
+                
+                budget_data_tracking.append({
+                    'Tracker': label,
+                    'System Budget (kWh)': tracking_gain_total
+                })
+
+            # --- 2. Cooling Budget (System Total) ---
+            if label == 'Fixed Custom': continue 
+
+            cooled_key = cooled_yield_keys.get(label)
+            if cooled_key:
+                cooled_yield = totals.get(cooled_key, yield_uncooled)
+            else:
+                cooled_yield = yield_uncooled
+            
+            cooling_gain_kwh_m2 = max(0, cooled_yield - yield_uncooled)
+            # Scale to system size
+            cooling_gain_total = cooling_gain_kwh_m2 * array_area_m2
+            
+            budget_data_cooling.append({
+                'Tracker': label,
+                'System Budget (kWh)': cooling_gain_total
+            })
+            
+        # --- Visualization ---
+        
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            st.subheader(f"Tracking: System Budget")
+            st.caption(f"Total allowable energy cost for the entire **{array_area_m2:.1f} m²** system vs Fixed Tilt.")
+            
+            fig_track_energy = go.Figure()
+            trackers_t = [d['Tracker'] for d in budget_data_tracking]
+            energy_t = [d['System Budget (kWh)'] for d in budget_data_tracking]
+            
+            fig_track_energy.add_trace(go.Bar(
+                x=trackers_t,
+                y=energy_t,
+                marker_color='#9b59b6',
+                text=[f"{v:,.0f}" for v in energy_t],
+                textposition='auto',
+                hovertemplate="<b>%{x}</b><br>System Gain: %{y:,.0f} kWh/yr<extra></extra>"
+            ))
+            fig_track_energy.update_layout(yaxis_title="Total System Budget (kWh/yr)", height=350, margin=dict(t=10, b=0))
+            st.plotly_chart(fig_track_energy, use_container_width=True)
+
+        with col2:
+            st.subheader(f"Cooling: System Budget")
+            st.caption(f"Total allowable energy cost for the entire **{array_area_m2:.1f} m²** system vs Uncooled.")
+            
+            fig_cool_energy = go.Figure()
+            trackers_c = [d['Tracker'] for d in budget_data_cooling]
+            energy_c = [d['System Budget (kWh)'] for d in budget_data_cooling]
+            
+            fig_cool_energy.add_trace(go.Bar(
+                x=trackers_c,
+                y=energy_c,
+                marker_color='#3498db',
+                text=[f"{v:,.0f}" for v in energy_c],
+                textposition='auto',
+                hovertemplate="<b>%{x}</b><br>System Gain: %{y:,.0f} kWh/yr<extra></extra>"
+            ))
+            fig_cool_energy.update_layout(yaxis_title="Total System Budget (kWh/yr)", height=350, margin=dict(t=10, b=0))
+            st.plotly_chart(fig_cool_energy, use_container_width=True)
+            
+        st.info(f"""
+        **System Budget Interpretation:**
+        Values represent the **Total Annual Energy Budget** for your specific **{s_system_capacity_kw} kW** system (approx. {array_area_m2:.1f} m²).
+        *   **Tracking Budget:** You have e.g., **{energy_t[-1] if energy_t else 0:,.0f} kWh** per year to spend on motors for the whole array.
+        *   **Cooling Budget:** You have e.g., **{energy_c[-1] if energy_c else 0:,.0f} kWh** per year to spend on pumps/fans for the whole array.
+        """)
+
+
+        st.markdown("---")
+
+
         # --- Section 2: Annual Energy Generation & Loss Analysis ---
         st.header("📉 Annual Energy Generation & Loss Analysis")
         st.markdown("Comparison of **Useful Energy** vs **Thermal** and **Angular** Losses.")
@@ -2671,118 +3052,6 @@ elif st.session_state['user_mode'] == 'Advanced':
         
         st.markdown("---")
         
-        # --- Section 3.5: Self-Consumption Analysis ---
-        st.header("⚡ Self-Consumption Analysis")
-        st.markdown("**Power consumed by the system itself** to operate trackers and active cooling.")
-        st.markdown("This represents energy that's generated but used internally, reducing net output to the grid or building.")
-        
-        # Placeholder self-consumption values (% of generation or absolute W/m²)
-        # These would be calculated based on tracker motor specs and cooling pump power
-        self_consumption = {
-            'Horizontal': {'Actuation': 0, 'Cooling': 15},  # W/m² average
-            '1-Axis Azimuth': {'Actuation': 8, 'Cooling': 15},
-            '1-Axis Polar': {'Actuation': 10, 'Cooling': 15},
-            '1-Axis Horizontal': {'Actuation': 7, 'Cooling': 15},
-            '1-Axis Elevation': {'Actuation': 9, 'Cooling': 15},
-            '2-Axis': {'Actuation': 15, 'Cooling': 15},
-            'Fixed Tilt': {'Actuation': 0, 'Cooling': 15},
-        }
-        
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            # Actuation power comparison
-            fig_actuation = go.Figure()
-            
-            trackers = list(self_consumption.keys())
-            actuation_power = [self_consumption[t]['Actuation'] for t in trackers]
-            
-            fig_actuation.add_trace(go.Bar(
-                x=trackers,
-                y=actuation_power,
-                marker=dict(color='#9b59b6'),
-                text=[f"{v} W/m²" if v > 0 else "N/A" for v in actuation_power],
-                textposition='outside'
-            ))
-            
-            fig_actuation.update_layout(
-                title="Tracker Actuation Power (Average)",
-                xaxis_title="System Type",
-                yaxis_title="Power Consumption (W/m²)",
-                height=400,
-                showlegend=False
-            )
-            
-            st.plotly_chart(fig_actuation, use_container_width=True)
-            
-            st.info("""
-            **Actuation Power** includes:
-            - Motor/actuator power for tracking
-            - Control system power
-            - Position sensors
-            
-            Fixed systems have zero actuation power. Dual-axis trackers consume the most.
-            """)
-        
-        with col2:
-            # Total self-consumption comparison (stacked)
-            fig_self_cons = go.Figure()
-            
-            actuation = [self_consumption[t]['Actuation'] for t in trackers]
-            cooling = [self_consumption[t]['Cooling'] for t in trackers]
-            
-            fig_self_cons.add_trace(go.Bar(
-                name='Actuation',
-                x=trackers,
-                y=actuation,
-                marker=dict(color='#9b59b6')
-            ))
-            
-            fig_self_cons.add_trace(go.Bar(
-                name='Active Cooling',
-                x=trackers,
-                y=cooling,
-                marker=dict(color='#1abc9c')
-            ))
-            
-            fig_self_cons.update_layout(
-                title="Total Self-Consumption (Actuation + Cooling)",
-                xaxis_title="System Type",
-                yaxis_title="Power Consumption (W/m²)",
-                barmode='stack',
-                height=400,
-                legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
-            ))
-            
-            st.plotly_chart(fig_self_cons, use_container_width=True)
-            
-            st.info("""
-            **Active Cooling Power** includes:
-            - Pump/circulation power
-            - Heat exchanger fans
-            - Control valves
-            
-            This is a fixed cost regardless of tracker type. The benefit appears in reduced thermal losses.
-            """)
-        
-        # Annual impact summary
-        st.markdown("### Annual Self-Consumption Impact")
-        
-        cols = st.columns(4)
-        
-        # Calculate annual self-consumption (simplified: avg power × 8760 hours)
-        for idx, (tracker, power) in enumerate(list(self_consumption.items())[:4]):
-            total_power = power['Actuation'] + power['Cooling']
-            annual_consumption = (total_power / 1000) * 8760  # kWh/m²/year
-            
-            with cols[idx]:
-                st.metric(
-                    tracker,
-                    f"{annual_consumption:.1f} kWh/m²",
-                    f"{total_power} W/m²"
-                )
-        
-        
         # --- Section 4: Energy Distribution (Pie Charts) ---
         st.header("🍰 Energy Distribution by Orientation")
         st.markdown("Proportion of **Total Available Solar Energy** converted to power vs. lost to various factors.")
@@ -2803,6 +3072,7 @@ elif st.session_state['user_mode'] == 'Advanced':
             # Actually, I in totals is usually the incident irradiance.
             # If we want to show shading as a loss, we should add it to the total pie.
             Total_Available = I + Shading
+            
             Conv = Total_Available - Shading - Ang - Therm - Yld
             
             # Base values and labels
@@ -2836,7 +3106,6 @@ elif st.session_state['user_mode'] == 'Advanced':
             )
             return fig
 
-        # Create Grid Layout (4 rows of 2)
         pie_configs = [
             ('Horizontal', 'Annual_I_Horizontal_kWh_m2', 'Annual_Loss_Ang_Horiz_kWh_m2', 'Annual_Loss_Therm_Horiz_kWh_m2', 'Annual_Loss_Shading_Horizontal_kWh_m2', 'Annual_Yield_Horizontal_kWh_m2'),
             ('Fixed Custom', 'Annual_I_Fixed_kWh_m2', 'Annual_Loss_Ang_Fixed_kWh_m2', 'Annual_Loss_Therm_Fixed_kWh_m2', 'Annual_Loss_Shading_Fixed_kWh_m2', 'Annual_Yield_Fixed_kWh_m2'),
@@ -2875,6 +3144,8 @@ elif st.session_state['user_mode'] == 'Advanced':
         viz_params = st.session_state.get('sim_viz_params', {})
         v_tilt = viz_params.get('fixed_tilt', 0)
         v_az = viz_params.get('fixed_azimuth', 0)
+        v_latitude = viz_params.get('latitude', latitude)
+        v_longitude = viz_params.get('longitude', longitude)
         v_arrays = viz_params.get('fixed_arrays', [])
         v_obstructions = viz_params.get('obstructions', [])
         analytics = st.session_state.get('analytics', {})
@@ -2894,7 +3165,7 @@ elif st.session_state['user_mode'] == 'Advanced':
         elif v_tracker == 'Fixed Tilt':
              st.markdown(f"Color/Opacity = **Relative Power** (Tilt: {v_tilt:.1f}°, Az: {v_az:.1f}°). **Colored Arrows** = Panel Normals.")
         elif v_tracker == '1-Axis Azimuthal':
-             st.markdown(f"Color/Opacity = **Relative Power** (Locked Tilt: {abs(latitude):.1f}°). **Dash Line** = Optimal El.")
+             st.markdown(f"Color/Opacity = **Relative Power** (Locked Tilt: {abs(v_latitude):.1f}°). **Dash Line** = Optimal El.")
         elif v_tracker == '1-Axis Horizontal':
              st.markdown("Color/Opacity = **Relative Power** (N-S Axis). **Dash Line** = Optimal Path.")
         elif v_tracker == '1-Axis Polar':
@@ -2911,8 +3182,8 @@ elif st.session_state['user_mode'] == 'Advanced':
         try:
             fig_sun = create_shadow_map_viz(
                 v_obstructions, 
-                latitude, 
-                longitude, 
+                v_latitude, 
+                v_longitude, 
                 tracker_type=v_tracker,
                 fixed_tilt=v_tilt,
                 fixed_azimuth=v_az,
@@ -3591,324 +3862,306 @@ elif st.session_state['user_mode'] == 'Advanced':
             st.dataframe(df_download)
 
         st.markdown("---")
+        st.markdown("---")
         st.markdown("## 💰 Economic Analysis")
         st.markdown("**Transition from physics to economics:** Compare the financial performance of different tracker types.")
         
-        # --- Economic Section 1: Cost Summary ---
-        st.header("📊 System Cost Breakdown")
-        st.markdown("Breakdown of capital (CAPEX) and operating (OPEX) costs for each tracker type.")
+        # Retrieve Frozen Params
+        s_economics = sim_params.get('economics', {})
+        s_price_config = sim_params.get('energy_config', {})
         
-        # Placeholder costs ($/kW) - These will be user inputs in the future
-        costs_capex = {
-            'Horizontal': {'Base': 1000, 'Structure': 0, 'Tracking': 0, 'Cooling': 150, 'Shading': 0, 'Labor': 100},
-            '1-Axis Azimuth': {'Base': 1000, 'Structure': 150, 'Tracking': 200, 'Cooling': 150, 'Shading': 50, 'Labor': 150},
-            '1-Axis Polar': {'Base': 1000, 'Structure': 180, 'Tracking': 200, 'Cooling': 150, 'Shading': 45, 'Labor': 150},
-            '1-Axis Horizontal': {'Base': 1000, 'Structure': 120, 'Tracking': 180, 'Cooling': 150, 'Shading': 55, 'Labor': 130},
-            '1-Axis Elevation': {'Base': 1000, 'Structure': 140, 'Tracking': 190, 'Cooling': 150, 'Shading': 52, 'Labor': 140},
-            '2-Axis': {'Base': 1000, 'Structure': 300, 'Tracking': 400, 'Cooling': 150, 'Shading': 40, 'Labor': 200},
-            'Fixed Tilt': {'Base': 1000, 'Structure': 50, 'Tracking': 0, 'Cooling': 150, 'Shading': 60, 'Labor': 80},
-        }
-        
-        # Display cost breakdown as stacked bar chart
-        col1, col2 = st.columns([2, 1])
-        
-        with col1:
-            # Create stacked bar chart for CAPEX
-            fig_capex = go.Figure()
+        if not s_economics:
+            st.warning("Economic parameters not found. Please run simulation again.")
+        else:
+            # --- 1. Calculate Economics for Each Tracker ---
             
-            tracker_names = list(costs_capex.keys())
-            for component in ['Base', 'Structure', 'Tracking', 'Cooling', 'Shading', 'Labor']:
-                values = [costs_capex[t][component] for t in tracker_names]
-                fig_capex.add_trace(go.Bar(
-                    name=component,
-                    x=tracker_names,
-                    y=values,
-                    text=values,
-                    textposition='inside',
-                ))
+            # Constants
+            PROJECT_LIFE_YEARS = 20
+            DISCOUNT_RATE = 0.07 # 7% nominal
+            DEGRADATION_RATE = 0.005 # 0.5% per year
             
-            fig_capex.update_layout(
-                title="Capital Expenditure (CAPEX) Breakdown",
-                xaxis_title="Tracker Type",
-                yaxis_title="Cost ($/kW)",
-                barmode='stack',
-                height=400,
-                legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
-            )
+            financial_results = {}
             
-            st.plotly_chart(fig_capex, use_container_width=True)
-        
-        with col2:
-            # Total CAPEX summary
-            st.markdown("### Total CAPEX ($/kW)")
-            for tracker, components in costs_capex.items():
-                total = sum(components.values())
-                st.metric(tracker, f"${total:,.0f}")
-        
-        st.markdown("---")
-        
-        # --- Economic Section 2: LCOE Comparison ---
-        st.header("⚡ Levelized Cost of Energy (LCOE)")
-        st.markdown("**LCOE** represents the average cost per kWh over the system lifetime. Lower is better.")
-        
-        # Placeholder LCOE values ($/kWh) - Will be calculated in future
-        lcoe_data = {
-            'Horizontal': 0.085,
-            '1-Axis Azimuth': 0.072,
-            '1-Axis Polar': 0.068,
-            '1-Axis Horizontal': 0.073,
-            '1-Axis Elevation': 0.070,
-            '2-Axis': 0.065,
-            'Fixed Tilt': 0.090,
-        }
-        
-        # Display as horizontal bar chart
-        fig_lcoe = go.Figure()
-        
-        trackers = list(lcoe_data.keys())
-        lcoe_values = [lcoe_data[t] for t in trackers]
-        
-        # Color scale: Green (low LCOE) to Red (high LCOE)
-        colors = ['#2ecc71' if v == min(lcoe_values) else '#e74c3c' if v == max(lcoe_values) else '#3498db' 
-                  for v in lcoe_values]
-        
-        fig_lcoe.add_trace(go.Bar(
-            x=lcoe_values,
-            y=trackers,
-            orientation='h',
-            marker=dict(color=colors),
-            text=[f"${v:.3f}/kWh" for v in lcoe_values],
-            textposition='outside'
-        ))
-        
-        fig_lcoe.update_layout(
-            title="LCOE Comparison (Lower is Better)",
-            xaxis_title="LCOE ($/kWh)",
-            yaxis_title="Tracker Type",
-            height=400,
-            showlegend=False
-        )
-        
-        st.plotly_chart(fig_lcoe, use_container_width=True)
-        
-        st.markdown("---")
-        
-        # --- Economic Section 3: Payback Period ---
-        st.header("📈 Payback Period Analysis")
-        st.markdown("**Payback Period** shows how long it takes for energy savings to recover the initial investment.")
-        
-        # Placeholder payback data (years)
-        payback_data = {
-            'Horizontal': 8.5,
-            '1-Axis Azimuth': 7.2,
-            '1-Axis Polar': 6.8,
-            '1-Axis Horizontal': 7.4,
-            '1-Axis Elevation': 7.0,
-            '2-Axis': 6.5,
-            'Fixed Tilt': 9.0,
-        }
-        
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            # Payback bar chart
-            fig_payback = go.Figure()
+            # Helper for NPV/IRR compatibility
+            def calculate_npv(rate, values):
+                try:
+                    return np.npv(rate, values)
+                except AttributeError:
+                    return sum(v / (1 + rate) ** i for i, v in enumerate(values))
+
+            def calculate_irr(values):
+                try:
+                    # Try numpy first, if available
+                    irr = np.irr(values)
+                    if np.isnan(irr) or np.isinf(irr): return 0.0
+                    return irr
+                except (AttributeError, NameError):
+                    # Basic estimation or failure
+                    return 0.0
+                except Exception:
+                    return 0.0
+
+            # Helper to get price for a specific hour
+            def get_hourly_price(hour, config):
+                if config['mode'] == 'Flat Rate':
+                    return config['flat_rate']
+                else:
+                    h = hour % 24
+                    for seg in config['tod_schedule']:
+                        if seg['start'] <= h < seg['end']:
+                            return seg['rate']
+                    return 0.05 # Fallback default
             
-            trackers = list(payback_data.keys())
-            payback_values = [payback_data[t] for t in trackers]
-            
-            colors_payback = ['#2ecc71' if v == min(payback_values) else '#e74c3c' if v == max(payback_values) else '#f39c12' 
-                              for v in payback_values]
-            
-            fig_payback.add_trace(go.Bar(
-                x=trackers,
-                y=payback_values,
-                marker=dict(color=colors_payback),
-                text=[f"{v:.1f} yrs" for v in payback_values],
-                textposition='outside'
-            ))
-            
-            fig_payback.update_layout(
-                title="Simple Payback Period (Lower is Better)",
-                xaxis_title="Tracker Type",
-                yaxis_title="Years",
-                height=400,
-                showlegend=False
-            )
-            
-            st.plotly_chart(fig_payback, use_container_width=True)
-        
-        with col2:
-            # Cumulative cash flow over time
-            st.markdown("### Cumulative Cash Flow (20 Years)")
-            
-            fig_cashflow = go.Figure()
-            
-            years = list(range(0, 21))
-            
-            # Placeholder cash flow curves for a few representative trackers
-            for tracker in ['2-Axis', '1-Axis Polar', 'Horizontal']:
-                payback = payback_data[tracker]
-                # Simple linear cash flow model
-                annual_savings = -1000 / payback  # Normalize initial cost to -1000
-                cashflow = [-1000 + (annual_savings * year) for year in years]
+            # Pre-calculate hourly prices if TOD
+            hourly_prices = np.zeros(24)
+            if s_price_config.get('mode') == 'Time of Day':
+                for h in range(24):
+                    hourly_prices[h] = get_hourly_price(h, s_price_config)
+            else:
+                hourly_prices[:] = s_price_config.get('flat_rate', 0.10)
                 
-                fig_cashflow.add_trace(go.Scatter(
-                    x=years,
-                    y=cashflow,
-                    mode='lines+markers',
-                    name=tracker,
-                    line=dict(width=2)
+            # Iterate Over Trackers
+            # metric_cols contains (Label, Key, Desc)
+            for label, key_yield_m2, _ in metric_cols:
+                
+                # 1. System Sizing
+                # Use total system capacity (kW)
+                sys_kw = s_system_capacity_kw
+                sys_w = sys_kw * 1000
+                
+                # Get Yield (Annual kWh)
+                yield_kwh_m2 = totals.get(key_yield_m2, 0)
+                # Convert m2 yield to System Yield kwh
+                # Normalized Yield (kWh/kW) = Yield_m2 / (Efficiency/100)
+                # System Yield = Norm_Yield * System_kW
+                if s_efficiency_percent > 0:
+                    specific_yield_kwh_kw = yield_kwh_m2 / (s_efficiency_percent / 100.0)
+                else:
+                    specific_yield_kwh_kw = 0
+                
+                annual_yield_kwh = specific_yield_kwh_kw * sys_kw
+                
+                # 2. CAPEX Calculation
+                # Base
+                capex_total = s_economics['capex_base'] * sys_w
+                
+                # Adders
+                is_tracking = label not in ['Horizontal', 'Fixed Tilt', 'Fixed E-W', 'Fixed N-S', 'Fixed Custom']
+                is_2axis = label == '2-Axis'
+                is_1axis = is_tracking and not is_2axis
+                
+                cost_components = {
+                    'Base System': s_economics['capex_base'] * sys_w,
+                    'Tracking Hardware': 0.0,
+                    'Active Cooling': 0.0
+                }
+                
+                if is_2axis:
+                    adder = s_economics['capex_2axis'] * sys_w
+                    capex_total += adder
+                    cost_components['Tracking Hardware'] = adder
+                elif is_1axis:
+                    adder = s_economics['capex_1axis'] * sys_w
+                    capex_total += adder
+                    cost_components['Tracking Hardware'] = adder
+                    
+                # Cooling Adder (Assume these results are UNCOOLED for now? 
+                # Wait, the metric_cols are uncooled. If we want to show cooled economics, we need separate loop.
+                # For this standard chart, let's assume Uncooled unless specified?
+                # Actually, user wants comparison. Let's stick to Uncooled Trackers for the main chart,
+                # Or maybe add a toggle? Let's assume standard uncooled for the main comparison.)
+                
+                # 3. OPEX Calculation
+                opex_annual = s_economics['opex_base'] * sys_kw # Fixed O&M
+                cost_components_opex = {'Fixed O&M': opex_annual}
+                
+                if is_tracking:
+                    tracker_om = s_economics['opex_tracker'] * sys_kw
+                    opex_annual += tracker_om
+                    cost_components_opex['Tracker O&M'] = tracker_om
+                    
+                # Variable O&M
+                var_om = s_economics['opex_variable'] * annual_yield_kwh
+                opex_annual += var_om
+                cost_components_opex['Variable O&M'] = var_om
+                
+                # 4. Revenue Calculation
+                # Need to weight yield by price profile
+                revenue_annual = 0
+                
+                p_col_map = {
+                    'Horizontal': 'P_Horiz',
+                    'Fixed Tilt': 'P_Fixed',
+                    'Fixed E-W': 'P_Fixed_EW',
+                    'Fixed N-S': 'P_Fixed_NS',
+                    '1-Axis Azimuth': 'P_1Axis_Az',
+                    '1-Axis Polar': 'P_1Axis_Polar',
+                    '1-Axis Horizontal': 'P_1Axis_Horiz',
+                    '1-Axis Elevation': 'P_1Axis_El',
+                    '2-Axis': 'P_2Axis'
+                }
+                
+                p_col = p_col_map.get(label)
+                if p_col and df_hourly is not None and p_col in df_hourly.columns:
+                    # Revenue integration
+                    prices = hourly_prices[df_hourly['Hour'].values.astype(int)]
+                    if s_efficiency_percent > 0:
+                        area_m2 = sys_kw / (s_efficiency_percent / 100.0)
+                        power_kw = (df_hourly[p_col].values / 1000.0) * area_m2
+                        energy_kwh = power_kw * df_hourly['Time_Step_Hours'].values
+                        revenue_annual = np.sum(energy_kwh * prices)
+                    else:
+                        revenue_annual = 0
+                else:
+                    avg_price = s_price_config.get('flat_rate', 0.10)
+                    revenue_annual = annual_yield_kwh * avg_price
+
+                # 5. Financial Metrics
+                # Cash Flow
+                cash_flows = [-capex_total]
+                
+                for yr in range(1, PROJECT_LIFE_YEARS + 1):
+                    # Degradation
+                    revenue_yr = revenue_annual * ((1 - DEGRADATION_RATE) ** (yr - 1)) 
+                    opex_yr = opex_annual 
+                    net_flow = revenue_yr - opex_yr
+                    cash_flows.append(net_flow)
+                    
+                # NPV
+                npv = calculate_npv(DISCOUNT_RATE, cash_flows)
+                
+                # IRR
+                irr = calculate_irr(cash_flows) * 100
+                    
+                # Payback
+                # Simple Payback = Capex / FirstYearNet
+                first_year_net = revenue_annual - opex_annual
+                if first_year_net > 0:
+                    payback = capex_total / first_year_net
+                else:
+                    payback = 99.9
+                    
+                # LCOE
+                # Sum(Costs_Discounted) / Sum(Energy_Discounted)
+                total_life_cost = capex_total + sum([opex_annual / ((1+DISCOUNT_RATE)**t) for t in range(1, PROJECT_LIFE_YEARS+1)])
+                total_life_energy = sum([(annual_yield_kwh * ((1 - DEGRADATION_RATE) ** (t - 1))) / ((1+DISCOUNT_RATE)**t) for t in range(1, PROJECT_LIFE_YEARS+1)])
+                
+                lcoe = total_life_cost / total_life_energy if total_life_energy > 0 else 999
+                
+                financial_results[label] = {
+                    'CAPEX': capex_total,
+                    'OPEX_Annual': opex_annual,
+                    'Revenue_Annual': revenue_annual,
+                    'NPV': npv,
+                    'IRR': irr,
+                    'Payback': payback,
+                    'LCOE': lcoe,
+                    'Components': cost_components,
+                    'Yield_kWh': annual_yield_kwh
+                }
+
+            # --- Visualization ---
+            
+            # 1. CAPEX Breakdown
+            st.header("📊 System Cost Breakdown (CAPEX)")
+            st.markdown(f"Total Capital Expenditure including hardware, installation, and adders for a **{s_system_capacity_kw} kW** system.")
+            
+            fig_capex = go.Figure()
+            trackers_list = list(financial_results.keys())
+            
+            # Stacked Bar for Cost Components
+            components = ['Base System', 'Tracking Hardware', 'Active Cooling']
+            colors = {'Base System': '#95a5a6', 'Tracking Hardware': '#e74c3c', 'Active Cooling': '#3498db'}
+            
+            for comp in components:
+                vals = [financial_results[t]['Components'].get(comp, 0) for t in trackers_list]
+                # Only add trace if non-zero
+                if sum(vals) > 0:
+                    fig_capex.add_trace(go.Bar(
+                        name=comp,
+                        x=trackers_list,
+                        y=vals,
+                        marker_color=colors.get(comp),
+                        text=[f"${v:,.0f}" if v>0 else "" for v in vals],
+                        textposition='auto'
+                    ))
+            
+            fig_capex.update_layout(barmode='stack', height=400, yaxis_title="Total Cost ($)", hovermode='x unified')
+            st.plotly_chart(fig_capex, use_container_width=True)
+
+            
+            # 2. Financial Metrics Comparison (Grid)
+            st.header("⚡ Financial Performance Metrics")
+            st.markdown("Comparison of LCOE, Payback Period, and ROI.")
+            
+            col_lcoe, col_payback = st.columns(2)
+            
+            with col_lcoe:
+                # LCOE Chart
+                lcoe_vals = [financial_results[t]['LCOE'] for t in trackers_list]
+                lcoe_colors = ['#2ecc71' if v == min(lcoe_vals) else '#3498db' for v in lcoe_vals] # Best is Green
+                
+                fig_lcoe = go.Figure(go.Bar(
+                    x=lcoe_vals, y=trackers_list, orientation='h',
+                    marker_color=lcoe_colors,
+                    text=[f"${v:.3f}/kWh" for v in lcoe_vals], textposition='outside'
                 ))
+                fig_lcoe.update_layout(title="LCOE ($/kWh) - Lower is Better", height=350, xaxis_title="$/kWh")
+                st.plotly_chart(fig_lcoe, use_container_width=True)
+                
+            with col_payback:
+                # Payback Chart
+                pb_vals = [financial_results[t]['Payback'] for t in trackers_list]
+                # Cap display at 20 years
+                pb_display = [min(20, v) for v in pb_vals]
+                pb_text = [f"{v:.1f} yrs" if v < 20 else ">20 yrs" for v in pb_vals]
+                pb_colors = ['#2ecc71' if v == min(pb_vals) else '#f39c12' for v in pb_vals]
+                
+                fig_pb = go.Figure(go.Bar(
+                    x=trackers_list, y=pb_display,
+                    marker_color=pb_colors,
+                    text=pb_text, textposition='outside'
+                ))
+                fig_pb.update_layout(title="Payback Period (Years)", height=350, yaxis_title="Years")
+                st.plotly_chart(fig_pb, use_container_width=True)
+
+            # 3. Cash Flow & ROI
+            st.subheader("💎 Investment Value (NPV vs IRR)")
             
-            # Add break-even line
-            fig_cashflow.add_hline(y=0, line_dash="dash", line_color="gray", 
-                                   annotation_text="Break-Even", annotation_position="right")
-            
-            fig_cashflow.update_layout(
-                title="Cumulative Cash Flow Comparison",
-                xaxis_title="Year",
-                yaxis_title="Cash Flow ($)",
-                height=400,
-                hovermode='x unified',
-                legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
-            )
-            
-            st.plotly_chart(fig_cashflow, use_container_width=True)
-        
-        st.markdown("---")
-        
-        # --- Economic Section 4: ROI Metrics ---
-        st.header("💎 Return on Investment (ROI)")
-        st.markdown("Compare the **Net Present Value (NPV)** and **Internal Rate of Return (IRR)** for each system.")
-        
-        # Placeholder ROI data
-        roi_data = {
-            'Horizontal': {'NPV': 12500, 'IRR': 11.2, 'Savings_Year1': 1470},
-            '1-Axis Azimuth': {'NPV': 18200, 'IRR': 13.5, 'Savings_Year1': 2100},
-            '1-Axis Polar': {'NPV': 21500, 'IRR': 14.8, 'Savings_Year1': 2350},
-            '1-Axis Horizontal': {'NPV': 17800, 'IRR': 13.2, 'Savings_Year1': 2050},
-            '1-Axis Elevation': {'NPV': 19500, 'IRR': 14.0, 'Savings_Year1': 2200},
-            '2-Axis': {'NPV': 24000, 'IRR': 15.5, 'Savings_Year1': 2600},
-            'Fixed Tilt': {'NPV': 10800, 'IRR': 10.5, 'Savings_Year1': 1350},
-        }
-        
-        # Create comparison table
-        roi_df = pd.DataFrame(roi_data).T
-        roi_df.index.name = 'Tracker Type'
-        roi_df = roi_df.reset_index()
-        roi_df.columns = ['Tracker Type', 'NPV ($)', 'IRR (%)', 'Year 1 Savings ($)']
-        
-        st.dataframe(roi_df, use_container_width=True)
-        
-        # ROI scatter plot
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            st.markdown("### NPV vs IRR Scatter")
-            
+            # Scatter Plot
             fig_roi = go.Figure()
-            
-            for tracker, metrics in roi_data.items():
+            for t in trackers_list:
+                res = financial_results[t]
                 fig_roi.add_trace(go.Scatter(
-                    x=[metrics['IRR']],
-                    y=[metrics['NPV']],
+                    x=[res['IRR']], y=[res['NPV']],
                     mode='markers+text',
-                    name=tracker,
-                    text=tracker,
-                    textposition='top center',
-                    marker=dict(size=12)
+                    name=t, text=[t], textposition='top center',
+                    marker=dict(size=15, line=dict(width=2, color='DarkSlateGrey'))
                 ))
-            
+                
             fig_roi.update_layout(
-                title="ROI Comparison: NPV vs IRR",
+                title="Profitability Landscape: NPV vs IRR",
                 xaxis_title="Internal Rate of Return (%)",
                 yaxis_title="Net Present Value ($)",
-                height=400,
+                height=450,
                 showlegend=False
             )
-            
             st.plotly_chart(fig_roi, use_container_width=True)
-        
-        with col2:
-            st.markdown("### Annual Savings Potential")
             
-            fig_savings = go.Figure()
+            # Recommendation
+            best_npv_tracker = max(financial_results, key=lambda x: financial_results[x]['NPV'])
+            best_res = financial_results[best_npv_tracker]
             
-            trackers = list(roi_data.keys())
-            savings = [roi_data[t]['Savings_Year1'] for t in trackers]
+            st.success(f"""
+            ### 🏆 Economically Superior Option: {best_npv_tracker}
             
-            fig_savings.add_trace(go.Bar(
-                x=trackers,
-                y=savings,
-                marker=dict(color='#2ecc71'),
-                text=[f"${v:,.0f}" for v in savings],
-                textposition='outside'
-            ))
-            
-            fig_savings.update_layout(
-                title="First Year Energy Savings",
-                xaxis_title="Tracker Type",
-                yaxis_title="Savings ($)",
-                height=400,
-                showlegend=False
-            )
-            
-            st.plotly_chart(fig_savings, use_container_width=True)
-        
-        st.markdown("---")
-        
-        # --- Economic Section 5: Cost-Benefit Summary ---
-        st.header("🎯 Economic Performance Summary")
-        st.markdown("**Quick reference:** Which tracker offers the best economic value?")
-        
-        # Create summary cards
-        cols = st.columns(4)
-        
-        with cols[0]:
-            best_lcoe = min(lcoe_data, key=lcoe_data.get)
-            st.metric(
-                "Lowest LCOE", 
-                best_lcoe, 
-                f"${lcoe_data[best_lcoe]:.3f}/kWh",
-                delta_color="inverse"
-            )
-        
-        with cols[1]:
-            best_payback = min(payback_data, key=payback_data.get)
-            st.metric(
-                "Fastest Payback", 
-                best_payback, 
-                f"{payback_data[best_payback]:.1f} years",
-                delta_color="inverse"
-            )
-        
-        with cols[2]:
-            best_npv = max(roi_data, key=lambda x: roi_data[x]['NPV'])
-            st.metric(
-                "Highest NPV", 
-                best_npv, 
-                f"${roi_data[best_npv]['NPV']:,.0f}",
-                delta_color="normal"
-            )
-        
-        with cols[3]:
-            best_irr = max(roi_data, key=lambda x: roi_data[x]['IRR'])
-            st.metric(
-                "Highest IRR", 
-                best_irr, 
-                f"{roi_data[best_irr]['IRR']:.1f}%",
-                delta_color="normal"
-            )
-        
-        # Final recommendation box
-        st.info(f"""
-        📌 **Recommended System Based on Economics:**  
-        The **{best_npv}** tracker offers the best overall financial performance with the highest NPV 
-        of **${roi_data[best_npv]['NPV']:,.0f}** and an IRR of **{roi_data[best_npv]['IRR']:.1f}%**.  
-        
-        ⚠️ *Note: These are placeholder values. Configure actual costs in the sidebar to see real economic analysis.*
-        """)
+            At current pricing, the **{best_npv_tracker}** system delivers the highest lifetime value:
+            *   **Net Present Value:** ${best_res['NPV']:,.0f}
+            *   **IRR:** {best_res['IRR']:.1f}%
+            *   **Payback:** {best_res['Payback']:.1f} years
+            *   **LCOE:** ${best_res['LCOE']:.3f}/kWh
+            """)
+
 
 
 else:
